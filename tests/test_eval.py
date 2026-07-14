@@ -1,15 +1,31 @@
 from pathlib import Path
 
+import pytest
+
 from forgemind.eval import (
+    ControlledSystems,
     EvaluationRunner,
     EvalCase,
     GoldFact,
     RunRecord,
     load_runs,
+    freeze_results,
+    load_cases,
+    parse_system_names,
     score_case,
     summarize,
     write_run,
 )
+from forgemind.context import assemble_evidence
+from forgemind.domain import (
+    AnswerDraft,
+    Claim,
+    GenerationResult,
+    ReasoningLedger,
+    SearchHit,
+    SourceRecord,
+)
+from forgemind.store import ForgeStore
 
 
 def test_scoring_rewards_gold_facts_evidence_and_valid_citations() -> None:
@@ -127,3 +143,158 @@ def test_runner_keeps_failed_runs_and_fixed_order() -> None:
 
     assert [run.system for run in runs] == ["bad", "good"]
     assert runs[0].error == "boom"
+
+
+def test_vector_adapter_uses_runtime_evidence_without_gold_manifest(
+    tmp_path: Path,
+) -> None:
+    store = ForgeStore(tmp_path / "forge.sqlite")
+    source = SourceRecord.from_text("session.py", "UUID migration", 1)
+    store.upsert_source(source)
+    hit = SearchHit(
+        "c1",
+        source.id,
+        source.sha256,
+        source.path,
+        1,
+        1,
+        source.text,
+        1.0,
+        ("semantic",),
+    )
+
+    class Retriever:
+        def search_vector(self, query: str, limit: int = 20) -> list[SearchHit]:
+            return [hit]
+
+        def search(self, query: str, limit: int = 20) -> list[SearchHit]:
+            return [hit]
+
+    class Client:
+        def complete(self, messages, max_tokens=None, json_schema=None) -> GenerationResult:
+            assert "gold-secret" not in str(messages)
+            return GenerationResult(
+                '{"summary":"Migration","claims":[{"text":"UUID migration","evidence_ids":["c1"]}],"unresolved":[]}',
+                10,
+                5,
+                1.0,
+                2.0,
+            )
+
+    systems = ControlledSystems(
+        store,
+        Retriever(),
+        controller=object(),
+        client=Client(),
+        count_tokens=lambda text: len(text.split()),
+        vram_mib=lambda: 123,
+    )
+    case = EvalCase(
+        id="c1",
+        question="Why?",
+        evidence_paths=["gold-secret"],
+        facts=[],
+    )
+
+    run = systems.vector(case)
+
+    assert run.system == "vector"
+    assert run.claims == ["UUID migration"]
+    assert run.retrieved_paths == ["session.py"]
+    assert run.cited_claims == [True]
+    assert systems.raw(case).system == "raw"
+    assert systems.hybrid(case).system == "hybrid"
+
+
+def test_forgemind_adapter_records_verified_controller_result(tmp_path: Path) -> None:
+    store = ForgeStore(tmp_path / "forge.sqlite")
+    source = SourceRecord.from_text("session.py", "UUID migration", 1)
+    store.upsert_source(source)
+    hit = SearchHit(
+        "c1",
+        source.id,
+        source.sha256,
+        source.path,
+        1,
+        1,
+        source.text,
+        1.0,
+        ("semantic",),
+    )
+    pack = assemble_evidence("Why?", [hit], lambda text: len(text.split()))
+
+    class Controller:
+        def investigate(self, question: str, mode: str):
+            assert mode == "investigate"
+            return (
+                AnswerDraft(
+                    summary="Migration",
+                    claims=[Claim(text="UUID migration", evidence_ids=["c1"])],
+                ),
+                ReasoningLedger(goal=question, cycle=1, evidence_ids=["c1"]),
+                [pack],
+            )
+
+    systems = ControlledSystems(
+        store,
+        retriever=object(),
+        controller=Controller(),
+        client=object(),
+        count_tokens=lambda text: len(text.split()),
+        vram_mib=lambda: 123,
+    )
+
+    run = systems.forgemind(
+        EvalCase(id="c1", question="Why?", evidence_paths=[], facts=[])
+    )
+
+    assert run.system == "forgemind"
+    assert run.claims == ["UUID migration"]
+    assert run.active_tokens == pack.active_tokens
+
+
+def test_freeze_requires_one_run_per_case_and_system(tmp_path: Path) -> None:
+    case = EvalCase(id="c1", question="q", evidence_paths=[], facts=[])
+    run = RunRecord(
+        system="raw",
+        case_id="c1",
+        claims=[],
+        cited_claims=[],
+        retrieved_paths=[],
+        abstained=True,
+        active_tokens=1,
+        latency_ms=2,
+        peak_vram_mib=3,
+    )
+    freeze = tmp_path / "frozen"
+
+    freeze_results(freeze, [case], [run], ["raw"])
+
+    assert load_runs(freeze / "runs.jsonl") == [run]
+    assert (freeze / "summary.json").is_file()
+    with pytest.raises(FileExistsError):
+        freeze_results(freeze, [case], [run], ["raw"])
+
+
+def test_case_loader_rejects_duplicate_ids(tmp_path: Path) -> None:
+    path = tmp_path / "cases.jsonl"
+    case = EvalCase(id="same", question="q", evidence_paths=[], facts=[])
+    path.write_text(
+        case.model_dump_json() + "\n" + case.model_dump_json() + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate"):
+        load_cases(path)
+
+
+def test_parse_system_names_rejects_unknown_and_duplicate_systems() -> None:
+    assert parse_system_names("raw, vector,forgemind") == [
+        "raw",
+        "vector",
+        "forgemind",
+    ]
+    with pytest.raises(ValueError, match="unknown"):
+        parse_system_names("raw,magic")
+    with pytest.raises(ValueError, match="duplicate"):
+        parse_system_names("raw,raw")

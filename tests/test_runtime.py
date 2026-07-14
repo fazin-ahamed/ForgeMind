@@ -9,6 +9,7 @@ from forgemind.runtime import (
     parse_chat_response,
     parse_nvidia_smi,
     parse_tokenize_response,
+    parse_used_vram_mib,
     physical_ram_mib,
     probe_hardware,
 )
@@ -114,6 +115,10 @@ def test_parse_chat_response_preserves_usage_and_timings() -> None:
 
 def test_parse_tokenize_response_counts_tokens() -> None:
     assert parse_tokenize_response({"tokens": [1, 2, 3, 4]}) == 4
+
+
+def test_parse_used_vram_uses_largest_visible_gpu() -> None:
+    assert parse_used_vram_mib("7421\n128\n") == 7421
 
 
 def test_llama_client_uses_tokenize_endpoint(tmp_path: Path, monkeypatch) -> None:

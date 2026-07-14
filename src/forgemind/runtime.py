@@ -56,6 +56,29 @@ def parse_tokenize_response(payload: dict[str, object]) -> int:
     return len(tokens)
 
 
+def parse_used_vram_mib(text: str) -> int:
+    values = [int(line.strip()) for line in text.splitlines() if line.strip()]
+    if not values:
+        raise RuntimeError("nvidia-smi returned no GPU memory values")
+    return max(values)
+
+
+def used_vram_mib(
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> int:
+    completed = run(
+        [
+            "nvidia-smi",
+            "--query-gpu=memory.used",
+            "--format=csv,noheader,nounits",
+        ],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return parse_used_vram_mib(completed.stdout)
+
+
 def physical_ram_mib() -> int:
     if os.name != "nt":
         return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1_048_576)

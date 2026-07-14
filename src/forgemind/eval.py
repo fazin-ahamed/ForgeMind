@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+import time
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
@@ -8,7 +10,20 @@ from pathlib import Path
 import numpy as np
 from pydantic import Field, model_validator
 
-from forgemind.domain import StrictModel
+from forgemind.context import assemble_evidence
+from forgemind.domain import (
+    AnswerDraft,
+    EvidencePack,
+    ReasoningLedger,
+    SearchHit,
+    StrictModel,
+    VerifiedAnswer,
+)
+from forgemind.store import ForgeStore
+from forgemind.verification import verify_answer
+
+
+_SYSTEM_NAMES = ("raw", "vector", "hybrid", "forgemind")
 
 
 class GoldFact(StrictModel):
@@ -114,6 +129,32 @@ def load_runs(path: Path) -> list[RunRecord]:
     ]
 
 
+def load_cases(path: Path) -> list[EvalCase]:
+    cases = [
+        EvalCase.model_validate_json(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    ids = [case.id for case in cases]
+    if len(ids) != len(set(ids)):
+        raise ValueError("evaluation cases contain duplicate IDs")
+    if not cases:
+        raise ValueError("evaluation requires at least one case")
+    return cases
+
+
+def parse_system_names(text: str) -> list[str]:
+    names = [name.strip() for name in text.split(",") if name.strip()]
+    unknown = [name for name in names if name not in _SYSTEM_NAMES]
+    if unknown:
+        raise ValueError(f"unknown evaluation systems: {', '.join(unknown)}")
+    if len(names) != len(set(names)):
+        raise ValueError("evaluation systems contain duplicates")
+    if not names:
+        raise ValueError("evaluation requires at least one system")
+    return names
+
+
 def _interval(
     values: list[float], rng: np.random.Generator
 ) -> tuple[float, float, float]:
@@ -156,6 +197,29 @@ def summarize(
     return summary
 
 
+def freeze_results(
+    directory: Path,
+    cases: list[EvalCase],
+    runs: list[RunRecord],
+    systems: list[str],
+) -> None:
+    run_path = directory / "runs.jsonl"
+    summary_path = directory / "summary.json"
+    if run_path.exists() or summary_path.exists():
+        raise FileExistsError(f"frozen evaluation already exists: {directory}")
+    expected = {(case.id, system) for case in cases for system in systems}
+    actual = [(run.case_id, run.system) for run in runs]
+    if set(actual) != expected or len(actual) != len(expected):
+        raise ValueError("evaluation is missing or duplicates case/system runs")
+    directory.mkdir(parents=True, exist_ok=True)
+    for run in runs:
+        write_run(run_path, run)
+    summary_path.write_text(
+        json.dumps(summarize(cases, runs), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 class EvaluationRunner:
     def __init__(
         self, systems: dict[str, Callable[[EvalCase], RunRecord]]
@@ -187,3 +251,102 @@ class EvaluationRunner:
                         )
                     )
         return runs
+
+
+class ControlledSystems:
+    def __init__(
+        self,
+        store: ForgeStore,
+        retriever: object,
+        controller: object,
+        client: object,
+        count_tokens: Callable[[str], int],
+        vram_mib: Callable[[], int],
+    ) -> None:
+        self.store = store
+        self.retriever = retriever
+        self.controller = controller
+        self.client = client
+        self.count_tokens = count_tokens
+        self.vram_mib = vram_mib
+
+    def vector(self, case: EvalCase) -> RunRecord:
+        return self._one_shot(
+            "vector", case, self.retriever.search_vector(case.question, 20)
+        )
+
+    def raw(self, case: EvalCase) -> RunRecord:
+        return self._one_shot("raw", case, self.store.active_hits())
+
+    def hybrid(self, case: EvalCase) -> RunRecord:
+        return self._one_shot(
+            "hybrid", case, self.retriever.search(case.question, 20)
+        )
+
+    def forgemind(self, case: EvalCase) -> RunRecord:
+        started = time.perf_counter()
+        vram_before = self.vram_mib()
+        draft, ledger, packs = self.controller.investigate(
+            case.question, "investigate"
+        )
+        answer = verify_answer(draft, ledger, packs, self.store)
+        return self._record(
+            "forgemind", case, answer, packs, started, vram_before
+        )
+
+    def _one_shot(
+        self, system: str, case: EvalCase, hits: list[SearchHit]
+    ) -> RunRecord:
+        started = time.perf_counter()
+        vram_before = self.vram_mib()
+        pack = assemble_evidence(case.question, hits, self.count_tokens)
+        result = self.client.complete(
+            [
+                {
+                    "role": "system",
+                    "content": "Answer only from supplied evidence. Cite evidence IDs. /no_think",
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"question": case.question, "evidence": pack.model_payload()},
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            json_schema=AnswerDraft.model_json_schema(),
+        )
+        draft = AnswerDraft.model_validate_json(result.text)
+        ledger = ReasoningLedger(
+            goal=case.question,
+            cycle=1,
+            retrieval_queries=[case.question],
+            evidence_ids=[item.id for item in pack.items],
+        )
+        answer = verify_answer(draft, ledger, [pack], self.store)
+        return self._record(system, case, answer, [pack], started, vram_before)
+
+    def _record(
+        self,
+        system: str,
+        case: EvalCase,
+        answer: VerifiedAnswer,
+        packs: list[EvidencePack],
+        started: float,
+        vram_before: int,
+    ) -> RunRecord:
+        paths = list(
+            dict.fromkeys(item.path for pack in packs for item in pack.items)
+        )
+        return RunRecord(
+            system=system,
+            case_id=case.id,
+            claims=[claim.text for claim in answer.claims],
+            cited_claims=[True for _claim in answer.claims],
+            retrieved_paths=paths,
+            abstained=answer.status == "abstained",
+            active_tokens=max((pack.active_tokens for pack in packs), default=0),
+            latency_ms=(time.perf_counter() - started) * 1_000,
+            # ponytail: model memory is stable in the local server; sample endpoints unless transient peaks become material.
+            peak_vram_mib=max(vram_before, self.vram_mib()),
+        )

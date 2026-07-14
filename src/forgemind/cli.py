@@ -7,7 +7,12 @@ from dataclasses import asdict
 from pathlib import Path
 
 from forgemind.config import RuntimeConfig
-from forgemind.runtime import LlamaClient, probe_hardware, start_with_single_fallback
+from forgemind.runtime import (
+    LlamaClient,
+    probe_hardware,
+    start_with_single_fallback,
+    used_vram_mib,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,6 +33,13 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("cases")
     evaluate.add_argument("--db", required=True)
     evaluate.add_argument("--min-recall20", type=float, default=0.70)
+    benchmark = subparsers.add_parser("evaluate")
+    benchmark.add_argument("cases")
+    benchmark.add_argument("--db", required=True)
+    benchmark.add_argument(
+        "--systems", default="raw,vector,hybrid,forgemind"
+    )
+    benchmark.add_argument("--freeze", required=True)
     ask = subparsers.add_parser("ask")
     ask.add_argument("question")
     ask.add_argument("--db", required=True)
@@ -74,8 +86,8 @@ def profile_scale(root: Path, db: Path, max_active_tokens: int) -> dict[str, obj
     }
 
 
-def _build_service(config: RuntimeConfig, database: Path):
-    from forgemind.reasoning import InvestigationService, ReasoningController
+def _build_stack(config: RuntimeConfig, database: Path):
+    from forgemind.reasoning import ReasoningController
     from forgemind.retrieval import Embedder, Retriever
     from forgemind.store import ForgeStore
 
@@ -85,12 +97,34 @@ def _build_service(config: RuntimeConfig, database: Path):
     store = ForgeStore(database)
     store.enable_vectors(embedder.dimensions)
     client = LlamaClient(config)
+    retriever = Retriever(store, embedder)
     controller = ReasoningController(
-        Retriever(store, embedder),
+        retriever,
         client,
         client.count_tokens,
     )
+    return store, retriever, client, controller
+
+
+def _build_service(config: RuntimeConfig, database: Path):
+    from forgemind.reasoning import InvestigationService
+
+    store, _retriever, _client, controller = _build_stack(config, database)
     return InvestigationService(controller, store)
+
+
+def _build_evaluation_systems(config: RuntimeConfig, database: Path):
+    from forgemind.eval import ControlledSystems
+
+    store, retriever, client, controller = _build_stack(config, database)
+    return ControlledSystems(
+        store,
+        retriever,
+        controller,
+        client,
+        client.count_tokens,
+        used_vram_mib,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -143,6 +177,34 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if recall20 >= args.min_recall20 else 1
 
     config = RuntimeConfig.from_env(os.environ)
+    if args.command == "evaluate":
+        from forgemind.eval import (
+            EvaluationRunner,
+            freeze_results,
+            load_cases,
+            parse_system_names,
+        )
+
+        names = parse_system_names(args.systems)
+        cases = load_cases(Path(args.cases))
+        with start_with_single_fallback(config) as server:
+            systems = _build_evaluation_systems(server.config, Path(args.db))
+            runners = {name: getattr(systems, name) for name in names}
+            runs = EvaluationRunner(runners).run(cases, names)
+        freeze_results(Path(args.freeze), cases, runs, names)
+        errors = sum(run.error is not None for run in runs)
+        print(
+            json.dumps(
+                {
+                    "cases": len(cases),
+                    "systems": names,
+                    "runs": len(runs),
+                    "errors": errors,
+                },
+                indent=2,
+            )
+        )
+        return 1 if errors else 0
     if args.command == "doctor":
         print(
             json.dumps(

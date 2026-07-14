@@ -6,6 +6,7 @@ import forgemind.cli as cli
 from forgemind.cli import build_parser, main
 from forgemind.domain import GenerationResult, HardwareProfile
 from forgemind.domain import VerifiedAnswer
+from forgemind.eval import EvalCase, RunRecord
 
 
 def test_cli_parses_raw_question_and_context() -> None:
@@ -16,6 +17,25 @@ def test_cli_parses_raw_question_and_context() -> None:
     assert args.command == "ask-raw"
     assert args.question == "Why did auth fail?"
     assert args.context == "notes.txt"
+
+
+def test_cli_parses_controlled_evaluation() -> None:
+    args = build_parser().parse_args(
+        [
+            "evaluate",
+            "cases.jsonl",
+            "--db",
+            "archive.sqlite",
+            "--systems",
+            "raw,vector,hybrid,forgemind",
+            "--freeze",
+            "benchmark-results",
+        ]
+    )
+
+    assert args.command == "evaluate"
+    assert args.systems == "raw,vector,hybrid,forgemind"
+    assert args.freeze == "benchmark-results"
 
 
 def test_doctor_prints_hardware_and_runtime(
@@ -150,3 +170,69 @@ def test_ask_command_returns_only_verified_service_output(
 
     assert main(["ask", "why", "--db", str(tmp_path / "db.sqlite"), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["summary"] == "Verified"
+
+
+def test_evaluate_freezes_every_requested_system(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    server_path = tmp_path / "server.exe"
+    model = tmp_path / "model.gguf"
+    server_path.write_bytes(b"exe")
+    model.write_bytes(b"model")
+    monkeypatch.setenv("FORGEMIND_LLAMA_SERVER", str(server_path))
+    monkeypatch.setenv("FORGEMIND_MODEL", str(model))
+    cases = tmp_path / "cases.jsonl"
+    cases.write_text(
+        EvalCase(id="c1", question="q", evidence_paths=[], facts=[]).model_dump_json()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class FakeServer:
+        def __init__(self, config) -> None:
+            self.config = config
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    class Systems:
+        def raw(self, case: EvalCase) -> RunRecord:
+            return RunRecord(
+                system="raw",
+                case_id=case.id,
+                claims=[],
+                cited_claims=[],
+                retrieved_paths=[],
+                abstained=True,
+                active_tokens=1,
+                latency_ms=2,
+                peak_vram_mib=3,
+            )
+
+    monkeypatch.setattr(cli, "start_with_single_fallback", FakeServer)
+    monkeypatch.setattr(
+        cli, "_build_evaluation_systems", lambda config, db: Systems(), raising=False
+    )
+    freeze = tmp_path / "freeze"
+
+    assert (
+        main(
+            [
+                "evaluate",
+                str(cases),
+                "--db",
+                str(tmp_path / "db.sqlite"),
+                "--systems",
+                "raw",
+                "--freeze",
+                str(freeze),
+            ]
+        )
+        == 0
+    )
+
+    assert (freeze / "runs.jsonl").is_file()
+    assert "raw" in json.loads(capsys.readouterr().out)["systems"]
