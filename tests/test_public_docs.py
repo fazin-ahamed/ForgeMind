@@ -32,3 +32,14 @@ def test_private_directories_remain_ignored() -> None:
         "/models/",
     ):
         assert entry in gitignore
+
+
+def test_paper_exporter_targets_only_the_private_workspace() -> None:
+    exporter = ROOT / "scripts" / "export_paper.ps1"
+    assert exporter.is_file()
+
+    text = exporter.read_text(encoding="utf-8")
+    assert ".forgemind-private" in text
+    assert "paper.md" in text
+    assert "pandoc" in text
+    assert "xelatex" in text
