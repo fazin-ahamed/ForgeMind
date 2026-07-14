@@ -15,7 +15,7 @@ class RuntimeConfig:
     batch_tokens: int = 512
     gpu_layers: int = -1
     max_output_tokens: int = 1_536
-    timeout_seconds: float = 120.0
+    timeout_seconds: float = 240.0
 
     @property
     def server_url(self) -> str:
