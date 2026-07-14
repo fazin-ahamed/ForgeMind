@@ -49,6 +49,13 @@ def parse_chat_response(payload: dict[str, object]) -> GenerationResult:
     )
 
 
+def parse_tokenize_response(payload: dict[str, object]) -> int:
+    tokens = payload.get("tokens")
+    if not isinstance(tokens, list):
+        raise RuntimeError("llama.cpp tokenize response omitted tokens")
+    return len(tokens)
+
+
 def physical_ram_mib() -> int:
     if os.name != "nt":
         return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1_048_576)
@@ -202,3 +209,11 @@ class LlamaClient:
             )
             response.raise_for_status()
             return parse_chat_response(response.json())
+
+    def count_tokens(self, text: str) -> int:
+        with httpx.Client(timeout=self.config.timeout_seconds) as client:
+            response = client.post(
+                f"{self.config.server_url}/tokenize", json={"content": text}
+            )
+            response.raise_for_status()
+            return parse_tokenize_response(response.json())

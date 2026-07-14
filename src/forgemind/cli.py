@@ -54,11 +54,11 @@ def _build_service(config: RuntimeConfig, database: Path):
     embedder = Embedder()
     store = ForgeStore(database)
     store.enable_vectors(embedder.dimensions)
-    # ponytail: UTF-8 bytes safely overestimate tokens; use batched llama tokenization if pack density becomes limiting.
+    client = LlamaClient(config)
     controller = ReasoningController(
         Retriever(store, embedder),
-        LlamaClient(config),
-        lambda text: len(text.encode("utf-8")),
+        client,
+        client.count_tokens,
     )
     return InvestigationService(controller, store)
 

@@ -5,7 +5,13 @@ import pytest
 
 from forgemind.config import RuntimeConfig
 from forgemind.runtime import LlamaClient, LlamaServer, start_with_single_fallback
-from forgemind.runtime import parse_chat_response, parse_nvidia_smi, physical_ram_mib, probe_hardware
+from forgemind.runtime import (
+    parse_chat_response,
+    parse_nvidia_smi,
+    parse_tokenize_response,
+    physical_ram_mib,
+    probe_hardware,
+)
 
 
 def test_parse_nvidia_smi_returns_typed_hardware_profile() -> None:
@@ -104,6 +110,42 @@ def test_parse_chat_response_preserves_usage_and_timings() -> None:
     assert result.prompt_tokens == 120
     assert result.completion_tokens == 8
     assert result.total_ms == 400.0
+
+
+def test_parse_tokenize_response_counts_tokens() -> None:
+    assert parse_tokenize_response({"tokens": [1, 2, 3, 4]}) == 4
+
+
+def test_llama_client_uses_tokenize_endpoint(tmp_path: Path, monkeypatch) -> None:
+    sent: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"tokens": [10, 20, 30]}
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            sent["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, url: str, json: dict[str, object]) -> FakeResponse:
+            sent.update({"url": url, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr("forgemind.runtime.httpx.Client", FakeClient)
+    client = LlamaClient(RuntimeConfig(tmp_path / "server", tmp_path / "model"))
+
+    assert client.count_tokens("hello") == 3
+    assert sent["url"] == "http://127.0.0.1:8080/tokenize"
+    assert sent["json"] == {"content": "hello"}
 
 
 def test_llama_client_posts_deterministic_chat_request(tmp_path: Path, monkeypatch) -> None:
