@@ -1,0 +1,35 @@
+# Private planning, research, reports, and visual-companion artifacts
+/.forgemind-private/
+/.superpowers/
+/docs/superpowers/
+/planning/
+/research/
+/reports/
+
+# Local models, private corpora, indexes, and generated artifacts
+/models/
+/data/private/
+/artifacts/
+/benchmark-results/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Python environments and caches
+/.venv/
+__pycache__/
+*.py[cod]
+/.pytest_cache/
+/.ruff_cache/
+/.mypy_cache/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
