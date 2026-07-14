@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import sqlite_vec
+
 from forgemind.domain import ChunkRecord, ProjectEvent, SourceRecord
 
 
@@ -109,3 +111,31 @@ class ForgeStore:
             "INSERT OR IGNORE INTO events VALUES (?, ?, ?, ?)",
             ((event.id, event.commit, event.occurred_at, event.summary) for event in events),
         )
+
+    def enable_vectors(self, dimensions: int) -> None:
+        if dimensions <= 0:
+            raise ValueError("vector dimensions must be positive")
+        self.connection.enable_load_extension(True)
+        try:
+            sqlite_vec.load(self.connection)
+        finally:
+            self.connection.enable_load_extension(False)
+        self.connection.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vectors "
+            f"USING vec0(chunk_id TEXT PRIMARY KEY, embedding float[{int(dimensions)}])"
+        )
+
+    def put_embedding(self, chunk_id: str, vector: list[float]) -> None:
+        self.connection.execute("DELETE FROM chunk_vectors WHERE chunk_id = ?", (chunk_id,))
+        self.connection.execute(
+            "INSERT INTO chunk_vectors(chunk_id, embedding) VALUES (?, ?)",
+            (chunk_id, sqlite_vec.serialize_float32(vector)),
+        )
+
+    def vector_search(self, vector: list[float], limit: int) -> list[tuple[str, float]]:
+        rows = self.connection.execute(
+            "SELECT chunk_id, distance FROM chunk_vectors "
+            "WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+            (sqlite_vec.serialize_float32(vector), limit),
+        ).fetchall()
+        return [(str(row[0]), float(row[1])) for row in rows]

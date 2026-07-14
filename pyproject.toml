@@ -8,6 +8,8 @@ version = "0.1.0"
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "httpx>=0.28,<1",
+  "sentence-transformers>=5,<6",
+  "sqlite-vec>=0.1.9,<0.2",
   "tree-sitter-language-pack>=0.9,<1",
 ]
 
