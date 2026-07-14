@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from forgemind.eval import (
+    EvaluationRunner,
     EvalCase,
     GoldFact,
     RunRecord,
@@ -101,3 +102,28 @@ def test_run_records_append_and_round_trip(tmp_path: Path) -> None:
     write_run(path, second)
 
     assert load_runs(path) == [first, second]
+
+
+def test_runner_keeps_failed_runs_and_fixed_order() -> None:
+    case = EvalCase(id="c1", question="q", evidence_paths=[], facts=[])
+
+    def good(item: EvalCase) -> RunRecord:
+        return RunRecord(
+            system="good",
+            case_id=item.id,
+            claims=[],
+            cited_claims=[],
+            retrieved_paths=[],
+            abstained=True,
+            active_tokens=1,
+            latency_ms=1,
+            peak_vram_mib=1,
+        )
+
+    def bad(item: EvalCase) -> RunRecord:
+        raise RuntimeError("boom")
+
+    runs = EvaluationRunner({"good": good, "bad": bad}).run([case], ["bad", "good"])
+
+    assert [run.system for run in runs] == ["bad", "good"]
+    assert runs[0].error == "boom"

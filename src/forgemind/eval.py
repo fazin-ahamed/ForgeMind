@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -153,3 +154,36 @@ def summarize(
             )
         }
     return summary
+
+
+class EvaluationRunner:
+    def __init__(
+        self, systems: dict[str, Callable[[EvalCase], RunRecord]]
+    ) -> None:
+        self.systems = systems
+
+    def run(self, cases: list[EvalCase], order: list[str]) -> list[RunRecord]:
+        runs: list[RunRecord] = []
+        for case in sorted(cases, key=lambda item: item.id):
+            for name in order:
+                try:
+                    run = self.systems[name](case)
+                    if run.system != name or run.case_id != case.id:
+                        raise ValueError("system returned a mismatched run record")
+                    runs.append(run)
+                except Exception as error:
+                    runs.append(
+                        RunRecord(
+                            system=name,
+                            case_id=case.id,
+                            claims=[],
+                            cited_claims=[],
+                            retrieved_paths=[],
+                            abstained=True,
+                            active_tokens=0,
+                            latency_ms=0,
+                            peak_vram_mib=0,
+                            error=str(error),
+                        )
+                    )
+        return runs
