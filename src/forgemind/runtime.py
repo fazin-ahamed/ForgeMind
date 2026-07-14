@@ -3,8 +3,12 @@ from __future__ import annotations
 import ctypes
 import os
 import subprocess
+import time
+import urllib.request
 from collections.abc import Callable
+from dataclasses import replace
 
+from forgemind.config import RuntimeConfig
 from forgemind.domain import HardwareProfile
 
 
@@ -53,3 +57,97 @@ def probe_hardware(
         text=True,
     )
     return parse_nvidia_smi(completed.stdout.splitlines()[0], physical_ram_mib())
+
+
+class LlamaServer:
+    def __init__(self, config: RuntimeConfig) -> None:
+        self.config = config
+        self.process: subprocess.Popen[str] | None = None
+
+    def command(self) -> list[str]:
+        return [
+            str(self.config.llama_server),
+            "-m",
+            str(self.config.model),
+            "--host",
+            self.config.host,
+            "--port",
+            str(self.config.port),
+            "-c",
+            str(self.config.context_tokens),
+            "-b",
+            str(self.config.batch_tokens),
+            "-ngl",
+            str(self.config.gpu_layers),
+            "--metrics",
+            "--cache-prompt",
+        ]
+
+    def start(self) -> None:
+        if self.process is not None:
+            return
+        self.process = subprocess.Popen(
+            self.command(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        self.wait_ready()
+
+    def wait_ready(self, timeout_seconds: float = 30.0) -> None:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if self.process is not None and self.process.poll() is not None:
+                output = self.process.stdout.read()[-4_000:] if self.process.stdout else ""
+                raise RuntimeError(
+                    f"llama-server exited with {self.process.returncode}: {output}"
+                )
+            try:
+                with urllib.request.urlopen(f"{self.config.server_url}/health", timeout=1) as response:
+                    if response.status == 200:
+                        return
+            except OSError:
+                time.sleep(0.25)
+        self.stop()
+        raise TimeoutError("llama-server did not become healthy within 30 seconds")
+
+    def stop(self) -> None:
+        if self.process is None:
+            return
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait(timeout=5)
+        self.process = None
+
+    def __enter__(self) -> LlamaServer:
+        self.start()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.stop()
+
+
+def start_with_single_fallback(
+    config: RuntimeConfig,
+    factory: Callable[[RuntimeConfig], LlamaServer] = LlamaServer,
+) -> LlamaServer:
+    first = factory(config)
+    try:
+        first.start()
+        return first
+    except RuntimeError as error:
+        first.stop()
+        if not any(word in str(error).lower() for word in ("out of memory", "cuda", "allocation")):
+            raise
+    fallback = replace(
+        config,
+        context_tokens=min(config.context_tokens, 8_192),
+        batch_tokens=min(config.batch_tokens, 256),
+    )
+    second = factory(fallback)
+    second.start()
+    return second
