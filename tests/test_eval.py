@@ -100,6 +100,29 @@ def test_runner_keeps_failed_runs_and_fixed_order() -> None:
     assert runs[0].error == "boom"
 
 
+def test_runner_skips_completed_pairs_and_persists_each_new_run() -> None:
+    case = proof_case()
+    completed = proof_run("raw")
+    vector = proof_run("vector")
+    persisted: list[BenchmarkRun] = []
+    runner = EvaluationRunner(
+        {"raw": lambda item: completed, "vector": lambda item: vector},
+        error_factory=lambda system, item, error: proof_run(
+            system, item.id, str(error)
+        ),
+    )
+
+    new = runner.run(
+        [case],
+        ["raw", "vector"],
+        existing=[completed],
+        on_run=persisted.append,
+    )
+
+    assert [item.system for item in new] == ["vector"]
+    assert persisted == new
+
+
 def test_vector_adapter_uses_runtime_evidence_without_gold_manifest(
     tmp_path: Path,
 ) -> None:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import stat
 import unicodedata
 from collections import Counter
 from pathlib import Path
@@ -472,3 +474,40 @@ def success_gates(summary: dict[str, Any]) -> dict[str, bool]:
         "context": forge["max_prompt_tokens"] <= 15_616,
         "complete": bool(summary["complete"]),
     }
+
+
+def finalize_run_group(
+    directory: Path,
+    cases: list[RuntimeCase],
+    systems: list[str],
+    provenance: dict[str, object],
+) -> dict[str, object]:
+    manifest_path = directory / "run-manifest.json"
+    if manifest_path.exists():
+        raise FileExistsError(f"run group is already frozen: {directory}")
+    run_path = directory / "runs.jsonl"
+    runs = [
+        BenchmarkRun.model_validate_json(line)
+        for line in run_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    expected = {(case.id, system) for case in cases for system in systems}
+    actual = [(run.case_id, run.system) for run in runs]
+    if set(actual) != expected or len(actual) != len(expected):
+        raise ValueError("run group has missing or duplicate case/system pairs")
+    run_groups = {run.run_group_id for run in runs}
+    if len(run_groups) != 1:
+        raise ValueError("run group contains inconsistent identifiers")
+    payload: dict[str, object] = {
+        "run_group_id": runs[0].run_group_id,
+        "runs": len(runs),
+        "runs_sha256": sha256_path(run_path),
+        "systems": systems,
+        "provenance": provenance,
+    }
+    manifest_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    manifest_path.chmod(stat.S_IREAD)
+    return payload

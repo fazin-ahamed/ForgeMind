@@ -210,3 +210,46 @@ def test_success_gates_require_five_points_and_positive_intervals() -> None:
     }
 
     assert all(benchmark.success_gates(summary).values())
+
+
+def test_finalize_rejects_missing_pairs(tmp_path) -> None:
+    directory = tmp_path / "group"
+    directory.mkdir()
+    (directory / "runs.jsonl").write_text(
+        benchmark_run(None, []).model_dump_json() + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="missing or duplicate"):
+        benchmark.finalize_run_group(
+            directory,
+            [runtime_case()],
+            list(benchmark.SYSTEMS),
+            provenance={},
+        )
+
+
+def test_finalize_hashes_complete_group_and_refuses_overwrite(tmp_path) -> None:
+    directory = tmp_path / "group"
+    directory.mkdir()
+    run = benchmark_run(None, []).model_copy(update={"system": "raw"})
+    (directory / "runs.jsonl").write_text(
+        run.model_dump_json() + "\n", encoding="utf-8"
+    )
+
+    manifest = benchmark.finalize_run_group(
+        directory,
+        [runtime_case()],
+        ["raw"],
+        provenance={"source_revision": "abc"},
+    )
+
+    assert manifest["runs"] == 1
+    assert len(manifest["runs_sha256"]) == 64
+    with pytest.raises(FileExistsError):
+        benchmark.finalize_run_group(
+            directory,
+            [runtime_case()],
+            ["raw"],
+            provenance={},
+        )

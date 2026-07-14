@@ -134,11 +134,20 @@ class EvaluationRunner:
         self.error_factory = error_factory
 
     def run(
-        self, cases: list[RuntimeCase], order: list[str]
+        self,
+        cases: list[RuntimeCase],
+        order: list[str],
+        existing: list[BenchmarkRun] | None = None,
+        on_run: Callable[[BenchmarkRun], None] | None = None,
     ) -> list[BenchmarkRun]:
+        completed = {
+            (run.case_id, run.system) for run in existing or []
+        }
         runs: list[BenchmarkRun] = []
         for case in sorted(cases, key=lambda item: item.id):
             for name in order:
+                if (case.id, name) in completed:
+                    continue
                 try:
                     run = self.systems[name](case)
                     if run.system != name or run.case_id != case.id:
@@ -146,6 +155,8 @@ class EvaluationRunner:
                 except Exception as error:
                     run = self.error_factory(name, case, error)
                 runs.append(run)
+                if on_run is not None:
+                    on_run(run)
         return runs
 
 
