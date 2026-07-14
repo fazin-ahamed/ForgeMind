@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
+from pathlib import Path
 
+import numpy as np
 from pydantic import Field, model_validator
 
 from forgemind.domain import StrictModel
@@ -94,3 +97,59 @@ def score_case(case: EvalCase, run: RunRecord) -> CaseMetrics:
         citation_precision=citation_precision,
         correct_abstention=float(case.answer_absent and run.abstained),
     )
+
+
+def write_run(path: Path, run: RunRecord) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(run.model_dump_json() + "\n")
+
+
+def load_runs(path: Path) -> list[RunRecord]:
+    return [
+        RunRecord.model_validate_json(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+
+
+def _interval(
+    values: list[float], rng: np.random.Generator
+) -> tuple[float, float, float]:
+    array = np.asarray(values, dtype=float)
+    means = np.asarray(
+        [rng.choice(array, len(array), replace=True).mean() for _ in range(2_000)]
+    )
+    return (
+        float(array.mean()),
+        float(np.quantile(means, 0.025)),
+        float(np.quantile(means, 0.975)),
+    )
+
+
+def summarize(
+    cases: list[EvalCase], runs: list[RunRecord], seed: int = 20_260_714
+) -> dict[str, object]:
+    case_by_id = {case.id: case for case in cases}
+    grouped: dict[str, list[CaseMetrics]] = defaultdict(list)
+    for run in runs:
+        grouped[run.system].append(score_case(case_by_id[run.case_id], run))
+    rng = np.random.default_rng(seed)
+    summary: dict[str, object] = {}
+    for system, metrics in sorted(grouped.items()):
+        summary[system] = {
+            name: dict(
+                zip(
+                    ("mean", "ci_low", "ci_high"),
+                    _interval([getattr(metric, name) for metric in metrics], rng),
+                    strict=True,
+                )
+            )
+            for name in (
+                "factual_f1",
+                "evidence_recall",
+                "citation_precision",
+                "correct_abstention",
+            )
+        }
+    return summary

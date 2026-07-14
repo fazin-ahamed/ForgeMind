@@ -1,4 +1,14 @@
-from forgemind.eval import EvalCase, GoldFact, RunRecord, score_case
+from pathlib import Path
+
+from forgemind.eval import (
+    EvalCase,
+    GoldFact,
+    RunRecord,
+    load_runs,
+    score_case,
+    summarize,
+    write_run,
+)
 
 
 def test_scoring_rewards_gold_facts_evidence_and_valid_citations() -> None:
@@ -48,3 +58,46 @@ def test_answer_absent_case_rewards_abstention() -> None:
     )
 
     assert score_case(case, run).correct_abstention == 1.0
+
+
+def test_summary_bootstrap_is_seeded() -> None:
+    case = EvalCase(
+        id="c1",
+        question="q",
+        evidence_paths=["a"],
+        facts=[GoldFact(id="f", any_of=[["uuid"]])],
+    )
+    run = RunRecord(
+        system="forgemind",
+        case_id="c1",
+        claims=["uuid"],
+        cited_claims=[True],
+        retrieved_paths=["a"],
+        abstained=False,
+        active_tokens=10,
+        latency_ms=20,
+        peak_vram_mib=30,
+    )
+
+    assert summarize([case], [run]) == summarize([case], [run])
+
+
+def test_run_records_append_and_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "runs.jsonl"
+    first = RunRecord(
+        system="raw",
+        case_id="c1",
+        claims=[],
+        cited_claims=[],
+        retrieved_paths=[],
+        abstained=True,
+        active_tokens=1,
+        latency_ms=2,
+        peak_vram_mib=3,
+    )
+    second = first.model_copy(update={"system": "forgemind"})
+
+    write_run(path, first)
+    write_run(path, second)
+
+    assert load_runs(path) == [first, second]
