@@ -8,9 +8,21 @@ from forgemind.domain import SearchHit
 from forgemind.store import ForgeStore
 
 
+EMBEDDER_MODEL = "BAAI/bge-small-en-v1.5"
+EMBEDDER_REVISION = "5c38ec7"
+
+
 class Embedder:
-    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5") -> None:
-        self.model = SentenceTransformer(model_name, device="cpu")
+    def __init__(
+        self,
+        model_name: str = EMBEDDER_MODEL,
+        revision: str = EMBEDDER_REVISION,
+    ) -> None:
+        self.model = SentenceTransformer(
+            model_name,
+            device="cpu",
+            revision=revision,
+        )
         dimensions = self.model.get_embedding_dimension()
         if dimensions is None:
             raise ValueError("embedding model does not declare its dimensions")

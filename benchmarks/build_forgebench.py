@@ -9,7 +9,7 @@ import urllib.request
 from collections.abc import Callable, Sequence
 from functools import partial
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from benchmarks.generate_archive import generate_distractors
 from forgemind.benchmark import (
@@ -330,7 +330,7 @@ def build_suite(
 
     for capability in CAPABILITIES:
         for raw_band in BAND_LIMITS:
-            band: ArchiveBand = raw_band
+            band = cast(ArchiveBand, raw_band)
             selected = select_cell(
                 candidates,
                 capability,

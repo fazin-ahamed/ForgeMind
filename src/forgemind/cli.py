@@ -4,10 +4,18 @@ import argparse
 import hashlib
 import json
 import os
-from dataclasses import asdict
+import platform
+import re
+import statistics
+import subprocess
+import time
+from collections import Counter, defaultdict
+from dataclasses import asdict, replace
+from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from forgemind.benchmark import RuntimeCase
 from forgemind.config import RuntimeConfig
 from forgemind.runtime import (
     LlamaClient,
@@ -41,13 +49,30 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("cases")
     evaluate.add_argument("--db", required=True)
     evaluate.add_argument("--min-recall20", type=float, default=0.70)
+    validate = subparsers.add_parser("benchmark-validate")
+    validate.add_argument("runtime")
+    validate.add_argument("gold")
+    validate.add_argument("--expected-per-cell", type=int, required=True)
+    validate.add_argument("--freeze", required=True)
+    prepare = subparsers.add_parser("benchmark-prepare")
+    prepare.add_argument("runtime")
+    prepare.add_argument("--db-root", required=True)
     benchmark = subparsers.add_parser("evaluate")
-    benchmark.add_argument("cases")
-    benchmark.add_argument("--db", required=True)
+    benchmark.add_argument("runtime")
+    benchmark.add_argument("--db-root", required=True)
     benchmark.add_argument(
         "--systems", default="raw,vector,hybrid,forgemind"
     )
-    benchmark.add_argument("--freeze", required=True)
+    benchmark.add_argument("--runs", required=True)
+    benchmark.add_argument("--run-group", required=True)
+    benchmark.add_argument(
+        "--archive-band", choices=("32k", "100k", "250k", "1m")
+    )
+    report = subparsers.add_parser("benchmark-report")
+    report.add_argument("runtime")
+    report.add_argument("gold")
+    report.add_argument("--runs", required=True)
+    report.add_argument("--output", required=True)
     ask = subparsers.add_parser("ask")
     ask.add_argument("question")
     ask.add_argument("--db", required=True)
@@ -95,6 +120,361 @@ def profile_scale(root: Path, db: Path, max_active_tokens: int) -> dict[str, obj
     }
 
 
+def _archive_groups(
+    cases: list[RuntimeCase],
+) -> dict[str, list[RuntimeCase]]:
+    groups: defaultdict[str, list[RuntimeCase]] = defaultdict(list)
+    for case in cases:
+        if re.fullmatch(r"[A-Za-z0-9._-]+", case.archive_id) is None:
+            raise ValueError(f"unsafe archive ID: {case.archive_id}")
+        groups[case.archive_id].append(case)
+    for archive_id, grouped in groups.items():
+        signatures = {
+            (
+                case.archive_path,
+                case.archive_sha256,
+                case.archived_tokens,
+                case.archive_band,
+            )
+            for case in grouped
+        }
+        if len(signatures) != 1:
+            raise ValueError(f"archive metadata differs within {archive_id}")
+    return dict(sorted(groups.items()))
+
+
+def validate_benchmark(
+    runtime_path: Path,
+    gold_path: Path,
+    expected_per_cell: int,
+    freeze: Path,
+    model: Path,
+) -> dict[str, object]:
+    from benchmarks.build_forgebench import RULER_REVISION
+    from benchmarks.import_external import (
+        LONGMEMEVAL_CODE_REVISION,
+        LONGMEMEVAL_DATA_REVISION,
+        REPOQA_CODE_REVISION,
+        REPOQA_DATA_VERSION,
+    )
+    from forgemind.benchmark import (
+        load_gold_cases,
+        load_runtime_cases,
+        sha256_path,
+        validate_bundle,
+    )
+
+    if freeze.exists():
+        raise FileExistsError(f"benchmark manifest already exists: {freeze}")
+    runtime = load_runtime_cases(runtime_path)
+    gold = load_gold_cases(gold_path)
+    validate_bundle(runtime, gold, expected_per_cell=expected_per_cell)
+    groups = _archive_groups(runtime)
+    archive_hashes: dict[str, str] = {}
+    for archive_id, cases in groups.items():
+        archive = Path(cases[0].archive_path)
+        actual = sha256_path(archive)
+        if actual != cases[0].archive_sha256:
+            raise ValueError(f"archive hash mismatch: {archive_id}")
+        archive_hashes[archive_id] = actual
+    counts = Counter(
+        f"{case.capability}/{case.archive_band}" for case in runtime
+    )
+    payload: dict[str, object] = {
+        "runtime_sha256": sha256_path(runtime_path),
+        "gold_sha256": sha256_path(gold_path),
+        "model_sha256": sha256_path(model),
+        "archives": len(groups),
+        "archive_sha256": archive_hashes,
+        "cases": len(runtime),
+        "matrix": dict(sorted(counts.items())),
+        "source_pins": {
+            "repoqa_code": REPOQA_CODE_REVISION,
+            "repoqa_data": REPOQA_DATA_VERSION,
+            "longmemeval_code": LONGMEMEVAL_CODE_REVISION,
+            "longmemeval_data": LONGMEMEVAL_DATA_REVISION,
+            "ruler": RULER_REVISION,
+        },
+    }
+    freeze.parent.mkdir(parents=True, exist_ok=True)
+    freeze.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return payload
+
+
+def prepare_benchmark(
+    runtime_path: Path,
+    database_root: Path,
+) -> list[dict[str, object]]:
+    from forgemind.benchmark import load_runtime_cases, sha256_path
+    from forgemind.ingest import ingest_project
+    from forgemind.retrieval import EMBEDDER_MODEL, EMBEDDER_REVISION, Embedder
+    from forgemind.store import ForgeStore
+
+    groups = _archive_groups(load_runtime_cases(runtime_path))
+    database_root.mkdir(parents=True, exist_ok=True)
+    embedder = Embedder()
+    embedder_identity = f"{EMBEDDER_MODEL}@{EMBEDDER_REVISION}"
+    results: list[dict[str, object]] = []
+    for archive_id, cases in groups.items():
+        case = cases[0]
+        archive = Path(case.archive_path)
+        if sha256_path(archive) != case.archive_sha256:
+            raise ValueError(f"archive hash mismatch: {archive_id}")
+        database = database_root / f"{archive_id}.sqlite"
+        sidecar_path = database_root / f"{archive_id}.json"
+        if database.is_file() and sidecar_path.is_file():
+            sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            if (
+                sidecar.get("archive_sha256") == case.archive_sha256
+                and sidecar.get("embedder_revision") == embedder_identity
+                and sidecar.get("database_sha256") == sha256_path(database)
+            ):
+                results.append(sidecar | {"status": "reused"})
+                continue
+        for artifact in (
+            database,
+            Path(f"{database}-wal"),
+            Path(f"{database}-shm"),
+        ):
+            if artifact.exists():
+                artifact.unlink()
+        store = ForgeStore(database)
+        store.enable_vectors(embedder.dimensions)
+        started = time.perf_counter()
+        try:
+            counts = ingest_project(archive, store, embedder)
+        finally:
+            store.close()
+        sidecar = {
+            "archive_id": archive_id,
+            "archive_sha256": case.archive_sha256,
+            "embedder_revision": embedder_identity,
+            "ingest_seconds": time.perf_counter() - started,
+            "database_bytes": database.stat().st_size,
+            "database_sha256": sha256_path(database),
+            **counts,
+        }
+        sidecar_path.write_text(
+            json.dumps(sidecar, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        results.append(sidecar | {"status": "built"})
+    return results
+
+
+def _prepared_database(case: RuntimeCase, database_root: Path) -> Path:
+    from forgemind.benchmark import sha256_path
+    from forgemind.retrieval import EMBEDDER_MODEL, EMBEDDER_REVISION
+
+    if sha256_path(Path(case.archive_path)) != case.archive_sha256:
+        raise ValueError(f"archive hash mismatch: {case.archive_id}")
+    database = database_root / f"{case.archive_id}.sqlite"
+    sidecar_path = database_root / f"{case.archive_id}.json"
+    if not database.is_file() or not sidecar_path.is_file():
+        raise ValueError(f"prepared database is missing: {case.archive_id}")
+    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    if sidecar.get("archive_sha256") != case.archive_sha256:
+        raise ValueError(f"prepared archive hash mismatch: {case.archive_id}")
+    identity = f"{EMBEDDER_MODEL}@{EMBEDDER_REVISION}"
+    if sidecar.get("embedder_revision") != identity:
+        raise ValueError(f"prepared embedder mismatch: {case.archive_id}")
+    if sidecar.get("database_sha256") != sha256_path(database):
+        raise ValueError(f"prepared database hash mismatch: {case.archive_id}")
+    return database
+
+
+def report_benchmark(
+    runtime_path: Path,
+    gold_path: Path,
+    runs_path: Path,
+    output: Path,
+) -> dict[str, object]:
+    from forgemind.benchmark import (
+        load_gold_cases,
+        load_runtime_cases,
+        sha256_path,
+        success_gates,
+        summarize_benchmark,
+    )
+    from forgemind.eval import load_runs
+
+    if output.exists():
+        raise FileExistsError(f"benchmark report already exists: {output}")
+    manifest_path = runs_path.parent / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("runs_sha256") != sha256_path(runs_path):
+        raise ValueError("frozen run hash does not match run manifest")
+    provenance = manifest.get("provenance", {})
+    if (
+        isinstance(provenance, dict)
+        and provenance.get("runtime_sha256") is not None
+        and provenance.get("runtime_sha256") != sha256_path(runtime_path)
+    ):
+        raise ValueError("runtime hash does not match run provenance")
+    summary = summarize_benchmark(
+        load_runtime_cases(runtime_path),
+        load_gold_cases(gold_path),
+        load_runs(runs_path),
+    )
+    gates = success_gates(summary)
+    indexing = provenance.get("indexing", []) if isinstance(provenance, dict) else []
+    seconds = [float(item["ingest_seconds"]) for item in indexing]
+    database_bytes = sum(int(item["database_bytes"]) for item in indexing)
+    index_summary = {
+        "archives": len(indexing),
+        "total_seconds": sum(seconds),
+        "median_seconds": statistics.median(seconds) if seconds else 0.0,
+        "database_bytes": database_bytes,
+    }
+    payload: dict[str, object] = {
+        "summary": summary,
+        "gates": gates,
+        "indexing": index_summary,
+        "runtime_sha256": sha256_path(runtime_path),
+        "gold_sha256": sha256_path(gold_path),
+        "run_manifest": manifest,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return payload
+
+
+def _benchmark_provenance(
+    config: RuntimeConfig,
+    model_sha256: str,
+    config_sha256: str,
+    database_root: Path,
+    runtime_path: Path,
+    cases: list[RuntimeCase],
+) -> dict[str, object]:
+    from forgemind.benchmark import sha256_path
+
+    source_revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    dirty_worktree = bool(
+        subprocess.run(
+            ["git", "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+    return {
+        "source_revision": source_revision,
+        "dirty_worktree": dirty_worktree,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "hardware": asdict(probe_hardware()),
+        "runtime": config.as_dict(),
+        "model_sha256": model_sha256,
+        "config_sha256": config_sha256,
+        "runtime_sha256": sha256_path(runtime_path),
+        "archive_sha256": {
+            case.archive_id: case.archive_sha256
+            for case in cases
+        },
+        "benchmark_seed": 20_260_714,
+        "indexing": [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(database_root.glob("*.json"))
+        ],
+    }
+
+
+def evaluate_benchmark(
+    runtime_path: Path,
+    database_root: Path,
+    systems_text: str,
+    runs_directory: Path,
+    run_group_id: str,
+    archive_band: str | None,
+    config: RuntimeConfig,
+) -> dict[str, object]:
+    from forgemind.benchmark import finalize_run_group, sha256_path
+    from forgemind.eval import (
+        EvaluationRunner,
+        load_cases,
+        load_runs,
+        parse_system_names,
+        write_run,
+    )
+
+    names = parse_system_names(systems_text)
+    if "raw32" in names and archive_band != "32k":
+        raise ValueError("raw32 requires --archive-band 32k")
+    cases = load_cases(runtime_path)
+    if archive_band is not None:
+        cases = [case for case in cases if case.archive_band == archive_band]
+    if not cases:
+        raise ValueError("no benchmark cases match the requested archive band")
+    benchmark_config = (
+        replace(config, context_tokens=32_768)
+        if "raw32" in names
+        else config
+    )
+    runs_path = runs_directory / "runs.jsonl"
+    if (runs_directory / "run-manifest.json").exists():
+        raise FileExistsError(f"run group is already frozen: {runs_directory}")
+    existing = load_runs(runs_path) if runs_path.is_file() else []
+    if existing and {run.run_group_id for run in existing} != {run_group_id}:
+        raise ValueError("existing runs belong to a different run group")
+    runs_directory.mkdir(parents=True, exist_ok=True)
+    groups = _archive_groups(cases)
+    databases = {
+        archive_id: _prepared_database(grouped[0], database_root)
+        for archive_id, grouped in groups.items()
+    }
+    with start_with_single_fallback(benchmark_config) as server:
+        if "raw32" in names and server.config.context_tokens != 32_768:
+            raise RuntimeError("raw32 server did not retain 32,768-token context")
+        model_sha256 = sha256_path(server.config.model)
+        config_sha256 = hashlib.sha256(
+            json.dumps(server.config.as_dict(), sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        for archive_id, grouped in groups.items():
+            systems = _build_evaluation_systems(
+                server.config,
+                databases[archive_id],
+                run_group_id,
+                model_sha256,
+                config_sha256,
+            )
+            functions = {name: getattr(systems, name) for name in names}
+            new_runs = EvaluationRunner(functions, systems.error_record).run(
+                grouped,
+                names,
+                existing=existing,
+                on_run=partial(write_run, runs_path),
+            )
+            existing.extend(new_runs)
+        provenance = _benchmark_provenance(
+            server.config,
+            model_sha256,
+            config_sha256,
+            database_root,
+            runtime_path,
+            cases,
+        )
+    finalize_run_group(runs_directory, cases, names, provenance)
+    return {
+        "cases": len(cases),
+        "systems": names,
+        "runs": len(existing),
+        "errors": sum(run.error is not None for run in existing),
+        "run_group": run_group_id,
+    }
+
+
 def _build_stack(
     config: RuntimeConfig, database: Path
 ) -> tuple[ForgeStore, Retriever, LlamaClient, ReasoningController]:
@@ -127,7 +507,11 @@ def _build_service(
 
 
 def _build_evaluation_systems(
-    config: RuntimeConfig, database: Path, run_group_id: str
+    config: RuntimeConfig,
+    database: Path,
+    run_group_id: str,
+    model_sha256: str | None = None,
+    config_sha256: str | None = None,
 ) -> ControlledSystems:
     from forgemind.benchmark import sha256_path
     from forgemind.eval import ControlledSystems
@@ -141,8 +525,9 @@ def _build_evaluation_systems(
         client.count_tokens,
         used_vram_mib,
         run_group_id,
-        sha256_path(config.model),
-        hashlib.sha256(
+        model_sha256 or sha256_path(config.model),
+        config_sha256
+        or hashlib.sha256(
             json.dumps(config.as_dict(), sort_keys=True).encode("utf-8")
         ).hexdigest(),
     )
@@ -150,6 +535,31 @@ def _build_evaluation_systems(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "benchmark-validate":
+        config = RuntimeConfig.from_env(os.environ)
+        validation = validate_benchmark(
+            Path(args.runtime),
+            Path(args.gold),
+            args.expected_per_cell,
+            Path(args.freeze),
+            config.model,
+        )
+        print(json.dumps(validation, indent=2, sort_keys=True))
+        return 0
+    if args.command == "benchmark-prepare":
+        prepared = prepare_benchmark(Path(args.runtime), Path(args.db_root))
+        print(json.dumps(prepared, indent=2, sort_keys=True))
+        return 0
+    if args.command == "benchmark-report":
+        report = report_benchmark(
+            Path(args.runtime),
+            Path(args.gold),
+            Path(args.runs),
+            Path(args.output),
+        )
+        gates = cast(dict[str, bool], report["gates"])
+        print(json.dumps(gates, indent=2, sort_keys=True))
+        return 0 if all(gates.values()) else 1
     if args.command == "profile-scale":
         profile = profile_scale(Path(args.root), Path(args.db), args.max_active_tokens)
         print(json.dumps(profile, indent=2))
@@ -200,37 +610,17 @@ def main(argv: list[str] | None = None) -> int:
 
     config = RuntimeConfig.from_env(os.environ)
     if args.command == "evaluate":
-        from forgemind.eval import (
-            EvaluationRunner,
-            freeze_results,
-            load_cases,
-            parse_system_names,
+        evaluation = evaluate_benchmark(
+            Path(args.runtime),
+            Path(args.db_root),
+            args.systems,
+            Path(args.runs),
+            args.run_group,
+            args.archive_band,
+            config,
         )
-
-        names = parse_system_names(args.systems)
-        cases = load_cases(Path(args.cases))
-        with start_with_single_fallback(config) as server:
-            systems = _build_evaluation_systems(
-                server.config, Path(args.db), Path(args.freeze).name
-            )
-            runners = {name: getattr(systems, name) for name in names}
-            runs = EvaluationRunner(runners, systems.error_record).run(
-                cases, names
-            )
-        freeze_results(Path(args.freeze), cases, runs, names)
-        errors = sum(run.error is not None for run in runs)
-        print(
-            json.dumps(
-                {
-                    "cases": len(cases),
-                    "systems": names,
-                    "runs": len(runs),
-                    "errors": errors,
-                },
-                indent=2,
-            )
-        )
-        return 1 if errors else 0
+        print(json.dumps(evaluation, indent=2, sort_keys=True))
+        return 1 if cast(int, evaluation["errors"]) else 0
     if args.command == "doctor":
         print(
             json.dumps(

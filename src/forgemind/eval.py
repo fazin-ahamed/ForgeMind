@@ -28,7 +28,7 @@ from forgemind.store import ForgeStore
 from forgemind.verification import verify_answer
 
 
-_SYSTEM_NAMES = ("raw", "vector", "hybrid", "forgemind")
+_SYSTEM_NAMES = ("raw", "vector", "hybrid", "forgemind", "raw32")
 
 
 class EvaluationRetriever(Protocol):
@@ -211,6 +211,15 @@ class ControlledSystems:
     def raw(self, case: RuntimeCase) -> BenchmarkRun:
         return self._one_shot("raw", case, self.store.active_hits())
 
+    def raw32(self, case: RuntimeCase) -> BenchmarkRun:
+        return self._one_shot(
+            "raw32",
+            case,
+            self.store.active_hits(),
+            budget=32_000,
+            prompt_limit=32_000,
+        )
+
     def hybrid(self, case: RuntimeCase) -> BenchmarkRun:
         return self._one_shot(
             "hybrid", case, self.retriever.search(case.question, 20)
@@ -237,12 +246,23 @@ class ControlledSystems:
         )
 
     def _one_shot(
-        self, system: str, case: RuntimeCase, hits: list[SearchHit]
+        self,
+        system: str,
+        case: RuntimeCase,
+        hits: list[SearchHit],
+        budget: int = 12_000,
+        prompt_limit: int | None = None,
     ) -> BenchmarkRun:
         started_at = datetime.now(timezone.utc).isoformat()
         started = time.perf_counter()
         vram_before = self.vram_mib()
-        pack = assemble_evidence(case.question, hits, self.count_tokens)
+        pack = assemble_evidence(
+            case.question,
+            hits,
+            self.count_tokens,
+            budget=budget,
+            archived_tokens=case.archived_tokens,
+        )
         result = self.client.complete(
             [
                 {
@@ -280,6 +300,7 @@ class ControlledSystems:
             started_at,
             started,
             vram_before,
+            prompt_limit=prompt_limit,
         )
 
     def _record(

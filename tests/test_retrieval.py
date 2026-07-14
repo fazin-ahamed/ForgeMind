@@ -1,8 +1,30 @@
 from pathlib import Path
 
+import forgemind.retrieval as retrieval
 from forgemind.domain import ChunkRecord, SourceRecord
-from forgemind.retrieval import Retriever, rrf
+from forgemind.retrieval import EMBEDDER_REVISION, Embedder, Retriever, rrf
 from forgemind.store import ForgeStore
+
+
+def test_embedder_loads_pinned_model_revision(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeModel:
+        def __init__(self, model_name, device, revision) -> None:
+            captured.update(
+                model_name=model_name,
+                device=device,
+                revision=revision,
+            )
+
+        def get_embedding_dimension(self) -> int:
+            return 3
+
+    monkeypatch.setattr(retrieval, "SentenceTransformer", FakeModel)
+
+    Embedder()
+
+    assert captured["revision"] == EMBEDDER_REVISION
 
 
 def test_vector_search_returns_nearest_chunk(tmp_path: Path) -> None:

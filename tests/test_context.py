@@ -37,8 +37,19 @@ def test_evidence_pack_never_exceeds_budget() -> None:
 
 
 def test_evidence_pack_rejects_oversized_active_budget() -> None:
-    with pytest.raises(ValueError, match="16,384"):
-        assemble_evidence("why", [], lambda text: len(text.split()), budget=16_385)
+    with pytest.raises(ValueError, match="32,768"):
+        assemble_evidence("why", [], lambda text: len(text.split()), budget=32_769)
+
+
+def test_evidence_pack_allows_isolated_raw_32k_budget() -> None:
+    pack = assemble_evidence(
+        "why",
+        [],
+        lambda text: len(text.split()),
+        budget=32_000,
+    )
+
+    assert pack.active_tokens == 0
 
 
 def test_model_payload_uses_compressed_text_but_retains_exact_source() -> None:

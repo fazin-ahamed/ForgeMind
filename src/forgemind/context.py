@@ -13,8 +13,8 @@ def assemble_evidence(
     budget: int = 12_000,
     archived_tokens: int = 0,
 ) -> EvidencePack:
-    if not 0 <= budget <= 16_384:
-        raise ValueError("active evidence budget must be between 0 and 16,384 tokens")
+    if not 0 <= budget <= 32_768:
+        raise ValueError("active evidence budget must be between 0 and 32,768 tokens")
     items: list[EvidenceItem] = []
     used = 0
     seen_spans: set[tuple[str, int, int]] = set()

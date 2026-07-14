@@ -179,6 +179,7 @@ def test_vector_adapter_uses_runtime_evidence_without_gold_manifest(
     assert [item.path for item in run.retrieved] == ["session.py"]
     assert [item.path for item in run.citations] == ["session.py"]
     assert systems.raw(case).system == "raw"
+    assert systems.raw32(case).system == "raw32"
     assert systems.hybrid(case).system == "hybrid"
 
 
@@ -320,6 +321,7 @@ def test_parse_system_names_rejects_unknown_and_duplicate_systems() -> None:
         "vector",
         "forgemind",
     ]
+    assert parse_system_names("raw32") == ["raw32"]
     with pytest.raises(ValueError, match="unknown"):
         parse_system_names("raw,magic")
     with pytest.raises(ValueError, match="duplicate"):

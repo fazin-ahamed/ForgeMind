@@ -94,7 +94,7 @@ class EvidencePack(StrictModel):
     query: str
     items: list[EvidenceItem]
     archived_tokens: int = Field(ge=0)
-    active_tokens: int = Field(ge=0, le=16_384)
+    active_tokens: int = Field(ge=0, le=32_768)
 
     def model_payload(self) -> dict[str, object]:
         return {

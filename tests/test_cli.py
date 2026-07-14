@@ -3,10 +3,66 @@ from dataclasses import replace
 from pathlib import Path
 
 import forgemind.cli as cli
-from forgemind.benchmark import BenchmarkRun, RuntimeCase
+import pytest
+from forgemind.benchmark import (
+    BAND_LIMITS,
+    AnswerSpec,
+    BenchmarkRun,
+    GoldCase,
+    RuntimeCase,
+    sha256_path,
+)
 from forgemind.cli import build_parser, main
 from forgemind.domain import GenerationResult, HardwareProfile
 from forgemind.domain import VerifiedAnswer
+
+
+def _write_jsonl(path: Path, rows) -> None:
+    path.write_text(
+        "".join(row.model_dump_json() + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
+def _benchmark_matrix(tmp_path: Path) -> tuple[Path, Path, list[RuntimeCase]]:
+    runtime: list[RuntimeCase] = []
+    gold: list[GoldCase] = []
+    for capability in (
+        "repository",
+        "memory",
+        "effective-context",
+        "adversarial",
+    ):
+        for band, (low, _high) in BAND_LIMITS.items():
+            case_id = f"{capability}-{band}"
+            archive = tmp_path / "archives" / case_id
+            archive.mkdir(parents=True)
+            (archive / "evidence.txt").write_text(case_id, encoding="utf-8")
+            runtime.append(
+                RuntimeCase(
+                    id=case_id,
+                    question="q",
+                    capability=capability,
+                    archive_band=band,
+                    archive_id=case_id,
+                    archive_path=str(archive),
+                    archive_sha256=sha256_path(archive),
+                    archived_tokens=low,
+                )
+            )
+            gold.append(
+                GoldCase(
+                    case_id=case_id,
+                    answer=AnswerSpec(kind="exact", accepted=["answer"]),
+                    source="fixture",
+                    source_revision="1",
+                )
+            )
+    runtime_path = tmp_path / "runtime.jsonl"
+    gold_path = tmp_path / "gold.jsonl"
+    _write_jsonl(runtime_path, runtime)
+    _write_jsonl(gold_path, gold)
+    return runtime_path, gold_path, runtime
 
 
 def test_cli_parses_raw_question_and_context() -> None:
@@ -19,23 +75,188 @@ def test_cli_parses_raw_question_and_context() -> None:
     assert args.context == "notes.txt"
 
 
-def test_cli_parses_controlled_evaluation() -> None:
-    args = build_parser().parse_args(
+def test_cli_parses_benchmark_workflow() -> None:
+    validate = build_parser().parse_args(
+        [
+            "benchmark-validate",
+            "runtime.jsonl",
+            "gold.jsonl",
+            "--expected-per-cell",
+            "10",
+            "--freeze",
+            "manifest.json",
+        ]
+    )
+    prepare = build_parser().parse_args(
+        [
+            "benchmark-prepare",
+            "runtime.jsonl",
+            "--db-root",
+            "databases",
+        ]
+    )
+    evaluate = build_parser().parse_args(
         [
             "evaluate",
-            "cases.jsonl",
-            "--db",
-            "archive.sqlite",
-            "--systems",
-            "raw,vector,hybrid,forgemind",
-            "--freeze",
-            "benchmark-results",
+            "runtime.jsonl",
+            "--db-root",
+            "databases",
+            "--runs",
+            "runs",
+            "--run-group",
+            "final-2026-08-03",
+        ]
+    )
+    report = build_parser().parse_args(
+        [
+            "benchmark-report",
+            "runtime.jsonl",
+            "gold.jsonl",
+            "--runs",
+            "runs/runs.jsonl",
+            "--output",
+            "summary.json",
         ]
     )
 
-    assert args.command == "evaluate"
-    assert args.systems == "raw,vector,hybrid,forgemind"
-    assert args.freeze == "benchmark-results"
+    assert validate.command == "benchmark-validate"
+    assert prepare.command == "benchmark-prepare"
+    assert evaluate.run_group == "final-2026-08-03"
+    assert report.command == "benchmark-report"
+
+
+def test_benchmark_validation_freezes_exact_archive_hashes(tmp_path: Path) -> None:
+    runtime_path, gold_path, _runtime = _benchmark_matrix(tmp_path)
+    model = tmp_path / "model.gguf"
+    model.write_bytes(b"model")
+    freeze = tmp_path / "benchmark-manifest.json"
+
+    payload = cli.validate_benchmark(
+        runtime_path,
+        gold_path,
+        expected_per_cell=1,
+        freeze=freeze,
+        model=model,
+    )
+
+    assert payload["archives"] == 16
+    assert payload["model_sha256"] == sha256_path(model)
+    assert freeze.is_file()
+
+
+def test_benchmark_prepare_indexes_shared_archive_once_and_resumes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runtime_path, _gold_path, runtime = _benchmark_matrix(tmp_path)
+    shared = runtime[0]
+    repeated = shared.model_copy(update={"id": "second-question"})
+    _write_jsonl(runtime_path, [shared, repeated])
+    calls: list[Path] = []
+    database_existed: list[bool] = []
+
+    class FakeEmbedder:
+        dimensions = 3
+
+    class FakeStore:
+        def __init__(self, database: Path) -> None:
+            database_existed.append(database.exists())
+            database.parent.mkdir(parents=True, exist_ok=True)
+            database.write_bytes(b"sqlite")
+
+        def enable_vectors(self, dimensions: int) -> None:
+            assert dimensions == 3
+
+        def close(self) -> None:
+            return None
+
+    def fake_ingest(root: Path, store, embedder) -> dict[str, int]:
+        calls.append(root)
+        return {"sources": 1, "chunks": 2, "events": 0}
+
+    monkeypatch.setattr("forgemind.retrieval.Embedder", FakeEmbedder)
+    monkeypatch.setattr("forgemind.store.ForgeStore", FakeStore)
+    monkeypatch.setattr("forgemind.ingest.ingest_project", fake_ingest)
+    databases = tmp_path / "databases"
+
+    first = cli.prepare_benchmark(runtime_path, databases)
+    second = cli.prepare_benchmark(runtime_path, databases)
+    (databases / f"{shared.archive_id}.sqlite").write_bytes(b"damaged")
+    third = cli.prepare_benchmark(runtime_path, databases)
+
+    assert len(calls) == 2
+    assert database_existed == [False, False]
+    assert first[0]["status"] == "built"
+    assert second[0]["status"] == "reused"
+    assert third[0]["status"] == "built"
+
+
+def test_prepared_database_validation_rejects_tampering(tmp_path: Path) -> None:
+    _runtime_path, _gold_path, runtime = _benchmark_matrix(tmp_path)
+    case = runtime[0]
+    databases = tmp_path / "databases"
+    databases.mkdir()
+    database = databases / f"{case.archive_id}.sqlite"
+    database.write_bytes(b"sqlite")
+    (databases / f"{case.archive_id}.json").write_text(
+        json.dumps(
+            {
+                "archive_sha256": case.archive_sha256,
+                "embedder_revision": "BAAI/bge-small-en-v1.5@5c38ec7",
+                "database_sha256": sha256_path(database),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert cli._prepared_database(case, databases) == database
+    database.write_bytes(b"tampered")
+
+    with pytest.raises(ValueError, match="database hash"):
+        cli._prepared_database(case, databases)
+
+
+def test_benchmark_report_includes_index_costs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runtime_path, gold_path, _runtime = _benchmark_matrix(tmp_path)
+    run_root = tmp_path / "runs"
+    run_root.mkdir()
+    runs = run_root / "runs.jsonl"
+    runs.write_text("", encoding="utf-8")
+    (run_root / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "runs_sha256": sha256_path(runs),
+                "provenance": {
+                    "runtime_sha256": sha256_path(runtime_path),
+                    "indexing": [
+                        {"ingest_seconds": 1.0, "database_bytes": 100},
+                        {"ingest_seconds": 2.0, "database_bytes": 200},
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "forgemind.benchmark.summarize_benchmark",
+        lambda runtime, gold, records: {"complete": True},
+    )
+    monkeypatch.setattr(
+        "forgemind.benchmark.success_gates",
+        lambda summary: {"proof": True},
+    )
+    output = tmp_path / "summary.json"
+
+    report = cli.report_benchmark(runtime_path, gold_path, runs, output)
+
+    assert report["indexing"] == {
+        "archives": 2,
+        "total_seconds": 3.0,
+        "median_seconds": 1.5,
+        "database_bytes": 300,
+    }
+    assert report["gates"] == {"proof": True}
 
 
 def test_doctor_prints_hardware_and_runtime(
@@ -182,6 +403,10 @@ def test_evaluate_freezes_every_requested_system(
     monkeypatch.setenv("FORGEMIND_LLAMA_SERVER", str(server_path))
     monkeypatch.setenv("FORGEMIND_MODEL", str(model))
     cases = tmp_path / "cases.jsonl"
+    archive = tmp_path / "archives" / "repository-32k"
+    archive.mkdir(parents=True)
+    (archive / "evidence.txt").write_text("evidence", encoding="utf-8")
+    archive_sha256 = sha256_path(archive)
     cases.write_text(
         RuntimeCase(
             id="c1",
@@ -189,8 +414,8 @@ def test_evaluate_freezes_every_requested_system(
             capability="repository",
             archive_band="32k",
             archive_id="repository-32k",
-            archive_path="archives/repository-32k",
-            archive_sha256="a" * 64,
+            archive_path=str(archive),
+            archive_sha256=archive_sha256,
             archived_tokens=32_000,
         ).model_dump_json()
         + "\n",
@@ -242,26 +467,63 @@ def test_evaluate_freezes_every_requested_system(
     monkeypatch.setattr(
         cli,
         "_build_evaluation_systems",
-        lambda config, db, run_group: Systems(),
+        lambda config, db, run_group, *hashes: Systems(),
         raising=False,
     )
+    databases = tmp_path / "databases"
+    databases.mkdir()
+    database = databases / "repository-32k.sqlite"
+    database.write_bytes(b"sqlite")
+    (databases / "repository-32k.json").write_text(
+        json.dumps(
+            {
+                "archive_sha256": archive_sha256,
+                "embedder_revision": "BAAI/bge-small-en-v1.5@5c38ec7",
+                "database_sha256": sha256_path(database),
+            }
+        ),
+        encoding="utf-8",
+    )
     freeze = tmp_path / "freeze"
+    monkeypatch.setattr(cli, "_benchmark_provenance", lambda *args: {})
 
     assert (
         main(
             [
                 "evaluate",
                 str(cases),
-                "--db",
-                str(tmp_path / "db.sqlite"),
+                "--db-root",
+                str(databases),
                 "--systems",
                 "raw",
-                "--freeze",
+                "--runs",
                 str(freeze),
+                "--run-group",
+                "g1",
             ]
         )
         == 0
     )
 
     assert (freeze / "runs.jsonl").is_file()
+    assert (freeze / "run-manifest.json").is_file()
     assert "raw" in json.loads(capsys.readouterr().out)["systems"]
+
+
+def test_raw32_requires_explicit_32k_band(tmp_path: Path) -> None:
+    server = tmp_path / "server.exe"
+    model = tmp_path / "model.gguf"
+    server.write_bytes(b"server")
+    model.write_bytes(b"model")
+    config = cli.RuntimeConfig(server, model)
+
+    with pytest.raises(ValueError, match="raw32 requires"):
+        cli.evaluate_benchmark(
+            tmp_path / "runtime.jsonl",
+            tmp_path / "databases",
+            "raw32",
+            tmp_path / "runs",
+            "raw32-check",
+            archive_band=None,
+            config=config,
+        )

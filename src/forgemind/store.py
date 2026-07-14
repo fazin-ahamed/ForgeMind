@@ -77,6 +77,10 @@ class ForgeStore:
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
 
+    def close(self) -> None:
+        self.connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.connection.close()
+
     @contextmanager
     def transaction(self) -> Iterator[None]:
         self.connection.execute("BEGIN IMMEDIATE")

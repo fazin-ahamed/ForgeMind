@@ -6,6 +6,7 @@ import json
 import re
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from forgemind.benchmark import (
     AnswerSpec,
@@ -91,7 +92,7 @@ def import_longmemeval(output: Path, limit: int = 0) -> None:
 
 
 def repoqa_candidates(
-    source: dict[str, object], root: Path
+    source: dict[str, list[dict[str, Any]]], root: Path
 ) -> tuple[list[RuntimeCase], list[GoldCase]]:
     runtime: list[RuntimeCase] = []
     gold: list[GoldCase] = []
@@ -156,7 +157,7 @@ def repoqa_candidates(
 
 
 def longmemeval_candidates(
-    source: list[dict[str, object]], root: Path
+    source: list[dict[str, Any]], root: Path
 ) -> tuple[list[RuntimeCase], list[GoldCase]]:
     runtime: list[RuntimeCase] = []
     gold: list[GoldCase] = []
@@ -248,7 +249,7 @@ def longmemeval_candidates(
 
 
 def import_longbench_v2(output: Path, limit: int = 25) -> None:
-    from datasets import load_dataset
+    from datasets import load_dataset  # type: ignore[import-untyped]
 
     dataset = load_dataset(
         "THUDM/LongBench-v2", split="train", revision=LONG_BENCH_REVISION
