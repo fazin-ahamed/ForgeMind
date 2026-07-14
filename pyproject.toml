@@ -7,10 +7,14 @@ name = "forgemind"
 version = "0.1.0"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+  "fastapi>=0.116,<1",
   "httpx>=0.28,<1",
+  "jinja2>=3.1,<4",
+  "pydantic>=2.11,<3",
   "sentence-transformers>=5,<6",
   "sqlite-vec>=0.1.9,<0.2",
   "tree-sitter-language-pack>=0.9,<1",
+  "uvicorn>=0.35,<1",
 ]
 
 [project.optional-dependencies]

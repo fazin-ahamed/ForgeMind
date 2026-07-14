@@ -1,5 +1,8 @@
 import hashlib
 from dataclasses import dataclass
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,3 +69,79 @@ class SearchHit:
     text: str
     score: float
     channels: tuple[str, ...]
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class EvidenceItem(StrictModel):
+    id: str
+    source_id: str
+    source_sha256: str
+    path: str
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    text: str
+    channels: tuple[str, ...] = ()
+
+
+class EvidencePack(StrictModel):
+    query: str
+    items: list[EvidenceItem]
+    archived_tokens: int = Field(ge=0)
+    active_tokens: int = Field(ge=0, le=16_384)
+
+
+class Hypothesis(StrictModel):
+    claim: str
+    status: Literal["testing", "supported", "rejected"] = "testing"
+
+
+class VerifiedFact(StrictModel):
+    fact: str
+    evidence_ids: list[str]
+
+
+class ReasoningLedger(StrictModel):
+    goal: str
+    hypotheses: list[Hypothesis] = Field(default_factory=list)
+    verified_facts: list[VerifiedFact] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    rejected_hypotheses: list[str] = Field(default_factory=list)
+    next_query: str | None = None
+    cycle: int = Field(default=0, ge=0, le=6)
+
+
+class Claim(StrictModel):
+    text: str
+    evidence_ids: list[str]
+
+
+class AnswerDraft(StrictModel):
+    summary: str
+    claims: list[Claim]
+    unresolved: list[str] = Field(default_factory=list)
+
+
+class ControllerDecision(StrictModel):
+    action: Literal["retrieve", "answer"]
+    ledger: ReasoningLedger
+    query: str | None = None
+    answer: AnswerDraft | None = None
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "ControllerDecision":
+        if self.action == "retrieve" and not self.query:
+            raise ValueError("retrieve action requires query")
+        if self.action == "answer" and self.answer is None:
+            raise ValueError("answer action requires answer")
+        return self
+
+
+class VerifiedAnswer(StrictModel):
+    summary: str
+    claims: list[Claim]
+    unresolved: list[str]
+    cycles: int = Field(ge=0, le=6)
+    status: Literal["supported", "partial", "abstained"]
