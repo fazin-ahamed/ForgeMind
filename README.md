@@ -94,6 +94,12 @@ This July 14 engineering smoke contains only two synthetic cases, including one 
 
 All eight runs completed without runtime errors and abstained correctly on the unsupported question. No ranking claim is justified by this sample. A larger frozen ForgeBench run is required for the technical paper.
 
+## ForgeBench proof program
+
+The staged ForgeBench program compares the same Qwen3-4B model across raw, vector, hybrid, and ForgeMind context strategies. Its runtime manifest contains questions and archive pointers only; answers and exact evidence remain in a separate gold manifest that the evaluation command cannot accept. See [benchmarks/README.md](benchmarks/README.md) for pinned source revisions, the 32-case development workflow, the 160-case final matrix, metrics, success gates, and exact reproduction commands.
+
+RepoQA, LongMemEval, and RULER inputs are derived benchmark slices rather than official leaderboard submissions. ForgeMind's intended claim remains bounded: it organizes and rehydrates evidence from a million-token information space; it does not directly attend to one million tokens.
+
 ## Limitations
 
 - ForgeMind supports a million-token information space through indexing and evidence rehydration; it does not directly attend to one million tokens.

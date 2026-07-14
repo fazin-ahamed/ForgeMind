@@ -43,3 +43,17 @@ def test_paper_exporter_targets_only_the_private_workspace() -> None:
     assert "paper.md" in text
     assert "pandoc" in text
     assert "xelatex" in text
+
+
+def test_public_docs_name_proof_commands_and_non_claims() -> None:
+    benchmark = (ROOT / "benchmarks" / "README.md").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    for command in (
+        "benchmark-validate",
+        "benchmark-prepare",
+        "benchmark-report",
+    ):
+        assert command in benchmark
+    assert "does not directly attend to one million tokens" in readme
+    assert "derived" in benchmark

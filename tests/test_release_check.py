@@ -1,4 +1,4 @@
-from scripts.release_check import validate_run
+from scripts.release_check import validate_model_free_benchmark, validate_run
 
 
 def test_healthy_run_passes() -> None:
@@ -27,3 +27,7 @@ def test_unhealthy_run_reports_every_gate() -> None:
     errors = validate_run(record)
 
     assert len(errors) == 6
+
+
+def test_release_gate_imports_model_free_benchmark_contract() -> None:
+    assert validate_model_free_benchmark() == []

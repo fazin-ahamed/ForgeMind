@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+
+def validate_model_free_benchmark() -> list[str]:
+    errors: list[str] = []
+    try:
+        benchmark = importlib.import_module("forgemind.benchmark")
+    except Exception as error:
+        return [f"benchmark contract import failed: {error}"]
+    if tuple(benchmark.SYSTEMS) != ("raw", "vector", "hybrid", "forgemind"):
+        errors.append("primary benchmark system contract changed")
+    if set(benchmark.BAND_LIMITS) != {"32k", "100k", "250k", "1m"}:
+        errors.append("benchmark archive-band contract changed")
+    return errors
 
 
 def validate_run(record: dict[str, object]) -> list[str]:
@@ -37,10 +51,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runs", type=int, default=30)
     parser.add_argument("--skip-static", action="store_true")
     args = parser.parse_args(argv)
+    benchmark_errors = validate_model_free_benchmark()
+    if benchmark_errors:
+        for error in benchmark_errors:
+            print(error)
+        return 1
     if not args.skip_static:
         run_checked([sys.executable, "-m", "ruff", "check", "."])
         run_checked([sys.executable, "-m", "mypy", "src"])
-        run_checked([sys.executable, "-m", "pytest", "-q"])
+        run_checked(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-m",
+                "not model and not benchmark",
+            ]
+        )
     with tempfile.TemporaryDirectory() as temp:
         records = Path(temp) / "smoke.jsonl"
         command = [

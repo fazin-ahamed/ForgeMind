@@ -11,6 +11,9 @@ def test_git_index_contains_no_private_artifacts() -> None:
     ).stdout.splitlines()
     forbidden = (
         ".forgemind-private/",
+        ".forgemind-private/benchmarks/",
+        ".forgemind-private/runs/",
+        "docs/superpowers/",
         "planning/",
         "research/",
         "reports/",
