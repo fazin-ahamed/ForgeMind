@@ -237,7 +237,7 @@ def test_prepared_database_validation_rejects_tampering(tmp_path: Path) -> None:
         json.dumps(
             {
                 "archive_sha256": case.archive_sha256,
-                "embedder_revision": "BAAI/bge-small-en-v1.5@5c38ec7",
+                "embedder_revision": "BAAI/bge-small-en-v1.5@5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
                 "database_sha256": sha256_path(database),
             }
         ),
@@ -514,7 +514,7 @@ def test_evaluate_freezes_every_requested_system(
         json.dumps(
             {
                 "archive_sha256": archive_sha256,
-                "embedder_revision": "BAAI/bge-small-en-v1.5@5c38ec7",
+                "embedder_revision": "BAAI/bge-small-en-v1.5@5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
                 "database_sha256": sha256_path(database),
             }
         ),

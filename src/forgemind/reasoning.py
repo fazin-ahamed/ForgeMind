@@ -21,6 +21,7 @@ from forgemind.verification import verify_answer
 
 
 MODE_CYCLES = {"retrieve": 1, "reason": 3, "investigate": 6}
+CONTROLLER_MAX_TOKENS = 1_536
 STOPPED = ["Investigation stopped without sufficient evidence."]
 
 
@@ -120,6 +121,7 @@ class ReasoningController:
             ]
             result = self.client.complete(
                 messages,
+                max_tokens=CONTROLLER_MAX_TOKENS,
                 json_schema=ControllerDecision.model_json_schema(),
             )
             generations.append(result)
@@ -134,6 +136,7 @@ class ReasoningController:
                         },
                         {"role": "user", "content": result.text},
                     ],
+                    max_tokens=CONTROLLER_MAX_TOKENS,
                     json_schema=ControllerDecision.model_json_schema(),
                 )
                 generations.append(repair)

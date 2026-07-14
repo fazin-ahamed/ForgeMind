@@ -11,7 +11,7 @@ RepoQA, LongMemEval, and RULER cases in ForgeBench are deterministic **derived**
 | [RepoQA](https://github.com/evalplus/repoqa) | code `ae876deb1365dbf5a15b0533723c8ed123eee586`; release `2024-06-23` | repository navigation |
 | [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned) | code `9e0b455f4ef0e2ab8f2e582289761153549043fc`; data `98d7416c24c778c2fee6e6f3006e7a073259d48f` | temporal and updated memory |
 | [RULER](https://github.com/NVIDIA/RULER) | `e8bbff677ca2c239640dc90f93310dcf32408c93` | derived multi-key retrieval |
-| [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) | `5c38ec7` | CPU embeddings |
+| [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) | `5c38ec7c405ec4b44b94cc5a9bb96e735b38267a` | CPU embeddings |
 
 Downloaded datasets, generated archives, gold manifests, databases, runs, and reports stay below `.forgemind-private/`, which is ignored by Git.
 

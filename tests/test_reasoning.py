@@ -103,9 +103,11 @@ def test_controller_stops_when_retrieval_adds_no_evidence() -> None:
 class RepairingClient:
     def __init__(self) -> None:
         self.calls = 0
+        self.max_tokens: list[int | None] = []
 
     def complete(self, messages, max_tokens=None, json_schema=None) -> GenerationResult:
         self.calls += 1
+        self.max_tokens.append(max_tokens)
         if self.calls == 1:
             return GenerationResult("not json", 1, 1, 1.0, 1.0)
         payload = {
@@ -128,6 +130,7 @@ def test_controller_repairs_invalid_model_json_once() -> None:
     draft, ledger, _packs, generations = controller.investigate("why")
 
     assert client.calls == 2
+    assert client.max_tokens == [1536, 1536]
     assert draft.claims[0].evidence_ids == ["c1"]
     assert ledger.cycle == 1
     assert len(generations) == 2

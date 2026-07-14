@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -54,6 +55,82 @@ def test_python_functions_become_line_addressable_chunks() -> None:
         ("login", 1, 2),
         ("logout", 4, 5),
     ]
+
+
+def test_chunking_keeps_parse_tree_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class State:
+        alive = True
+
+    class Node:
+        def __init__(
+            self,
+            state: State,
+            node_type: str,
+            children: list["Node"] | None = None,
+        ) -> None:
+            self.state = state
+            self.type = node_type
+            self._children = children or []
+            self.start_point = SimpleNamespace(row=0)
+            self.end_point = SimpleNamespace(row=1)
+            self.start_byte = 4
+            self.end_byte = 7
+
+        @property
+        def children(self) -> list["Node"]:
+            if not self.state.alive:
+                raise RuntimeError("parse tree released")
+            return self._children
+
+        def child_by_field_name(self, _field: str) -> "Node":
+            if not self.state.alive:
+                raise RuntimeError("parse tree released")
+            return Node(self.state, "identifier")
+
+    class Tree:
+        def __init__(self) -> None:
+            self.state = State()
+            function = Node(self.state, "function_definition")
+            function.start_byte = 0
+            function.end_byte = len("def run():\n    return 1")
+            self.root_node = Node(self.state, "module", [function])
+
+        def __del__(self) -> None:
+            self.state.alive = False
+
+    class Parser:
+        def parse(self, _source: bytes) -> Tree:
+            return Tree()
+
+    monkeypatch.setattr("forgemind.ingest.get_parser", lambda _language: Parser())
+    source = SourceRecord.from_text("app.py", "def run():\n    return 1\n", 1)
+
+    chunks = chunk_source(source)
+
+    assert [(chunk.symbol, chunk.start_line, chunk.end_line) for chunk in chunks] == [
+        ("run", 1, 2)
+    ]
+
+
+def test_chunking_splits_source_lines_once() -> None:
+    class CountingText(str):
+        calls = 0
+
+        def splitlines(self, keepends: bool = False) -> list[str]:
+            self.calls += 1
+            return super().splitlines(keepends)
+
+    text = CountingText(
+        "def first():\n    return 1\n\ndef second():\n    return 2\n"
+    )
+    source = SourceRecord("source", "app.py", "sha", 1, text)
+
+    chunks = chunk_source(source)
+
+    assert len(chunks) == 2
+    assert text.calls == 1
 
 
 def test_parse_git_log_creates_temporal_events() -> None:

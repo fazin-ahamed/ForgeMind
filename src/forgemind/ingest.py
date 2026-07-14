@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
+from bisect import bisect_left
 from pathlib import Path
 from typing import Protocol
 
@@ -78,33 +79,54 @@ def discover_text_sources(root: Path) -> list[SourceRecord]:
     return sources
 
 
-def _chunk(source: SourceRecord, start: int, end: int, symbol: str | None) -> ChunkRecord:
-    text = "\n".join(source.text.splitlines()[start - 1 : end])
+def _chunk(
+    source: SourceRecord,
+    lines: list[str],
+    start: int,
+    end: int,
+    symbol: str | None,
+) -> ChunkRecord:
+    text = "\n".join(lines[start - 1 : end])
     chunk_id = hashlib.sha256(f"{source.id}:{start}:{end}".encode()).hexdigest()
     return ChunkRecord(chunk_id, source.id, source.path, start, end, text, symbol)
 
 
 def chunk_source(source: SourceRecord, max_lines: int = 120) -> list[ChunkRecord]:
+    lines = source.text.splitlines()
     language = LANGUAGES.get(Path(source.path).suffix.lower())
     if language:
         source_bytes = source.text.encode("utf-8")
-        stack = [get_parser(language).parse(source_bytes).root_node]
-        chunks: list[ChunkRecord] = []
+        parser = get_parser(language)
+        tree = parser.parse(source_bytes)
+        stack = [tree.root_node]
+        byte_spans: list[tuple[int, int, str | None]] = []
+        name = None
         while stack:
             node = stack.pop()
             if node.type in FUNCTION_TYPES:
                 name = node.child_by_field_name("name")
                 symbol = source_bytes[name.start_byte : name.end_byte].decode() if name else None
-                chunks.append(
-                    _chunk(source, node.start_point.row + 1, node.end_point.row + 1, symbol)
-                )
+                byte_spans.append((node.start_byte, node.end_byte, symbol))
             else:
                 stack.extend(reversed(node.children))
-        if chunks:
-            return chunks
-    line_count = len(source.text.splitlines())
+        if byte_spans:
+            del node, name, stack, tree, parser
+            newlines = [
+                index for index, value in enumerate(source_bytes) if value == ord("\n")
+            ]
+            return [
+                _chunk(
+                    source,
+                    lines,
+                    bisect_left(newlines, start_byte) + 1,
+                    bisect_left(newlines, end_byte) + 1,
+                    symbol,
+                )
+                for start_byte, end_byte, symbol in byte_spans
+            ]
+    line_count = len(lines)
     return [
-        _chunk(source, start, min(start + max_lines - 1, line_count), None)
+        _chunk(source, lines, start, min(start + max_lines - 1, line_count), None)
         for start in range(1, line_count + 1, max_lines)
     ]
 

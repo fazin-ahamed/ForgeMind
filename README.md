@@ -42,8 +42,8 @@ The July 14, 2026 gate used:
 - Python 3.11 on Windows;
 - [Qwen3-4B GGUF](https://huggingface.co/Qwen/Qwen3-4B-GGUF) Q4_K_M;
 - [llama.cpp b9994](https://github.com/ggml-org/llama.cpp/releases/tag/b9994), commit `14d3ba4`;
-- [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5), revision `5c38ec7`, on CPU;
-- a 16,384-token hard active-context limit and 768-token output limit.
+- [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5), revision `5c38ec7c405ec4b44b94cc5a9bb96e735b38267a`, on CPU;
+- a 16,384-token hard active-context limit and 1,536-token output limit.
 
 The controlled two-case, four-system smoke run stayed at 302 active tokens and 6,278–6,295 MiB sampled VRAM. Those figures validate the local path; they are not a general performance claim.
 

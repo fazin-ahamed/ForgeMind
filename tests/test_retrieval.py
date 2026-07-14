@@ -25,6 +25,8 @@ def test_embedder_loads_pinned_model_revision(monkeypatch) -> None:
     Embedder()
 
     assert captured["revision"] == EMBEDDER_REVISION
+    assert len(EMBEDDER_REVISION) == 40
+    assert all(character in "0123456789abcdef" for character in EMBEDDER_REVISION)
 
 
 def test_vector_search_returns_nearest_chunk(tmp_path: Path) -> None:
