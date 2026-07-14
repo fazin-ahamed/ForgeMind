@@ -4,13 +4,16 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 from threading import Lock
+from typing import Protocol
 
 from forgemind.context import assemble_evidence
 from forgemind.domain import (
     AnswerDraft,
     ControllerDecision,
     EvidencePack,
+    GenerationResult,
     ReasoningLedger,
+    SearchHit,
     VerifiedAnswer,
 )
 from forgemind.store import ForgeStore
@@ -19,6 +22,19 @@ from forgemind.verification import verify_answer
 
 MODE_CYCLES = {"retrieve": 1, "reason": 3, "investigate": 6}
 STOPPED = ["Investigation stopped without sufficient evidence."]
+
+
+class SearchRetriever(Protocol):
+    def search(self, query: str, limit: int = 20) -> list[SearchHit]: ...
+
+
+class CompletionClient(Protocol):
+    def complete(
+        self,
+        messages: list[dict[str, str]],
+        max_tokens: int | None = None,
+        json_schema: dict[str, object] | None = None,
+    ) -> GenerationResult: ...
 
 
 def _json_text(text: str) -> str:
@@ -32,8 +48,8 @@ def _json_text(text: str) -> str:
 class ReasoningController:
     def __init__(
         self,
-        retriever: object,
-        client: object,
+        retriever: SearchRetriever,
+        client: CompletionClient,
         count_tokens: Callable[[str], int],
     ) -> None:
         self.retriever = retriever

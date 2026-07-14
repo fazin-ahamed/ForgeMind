@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Protocol
 
-from tree_sitter_language_pack import get_parser
+from tree_sitter_language_pack import SupportedLanguage, get_parser
 
 from forgemind.domain import ChunkRecord, ProjectEvent, SourceRecord
 from forgemind.store import ForgeStore
@@ -34,7 +34,7 @@ SECRET_PATTERNS = (
     ),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
 )
-LANGUAGES = {
+LANGUAGES: dict[str, SupportedLanguage] = {
     ".py": "python",
     ".js": "javascript",
     ".jsx": "javascript",

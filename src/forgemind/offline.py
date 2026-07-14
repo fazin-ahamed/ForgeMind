@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from forgemind.domain import GenerationResult, SearchHit, SourceRecord
@@ -17,7 +18,12 @@ class _Retriever:
 
 
 class _Client:
-    def complete(self, messages, max_tokens=None, json_schema=None) -> GenerationResult:
+    def complete(
+        self,
+        messages: list[dict[str, str]],
+        max_tokens: int | None = None,
+        json_schema: dict[str, object] | None = None,
+    ) -> GenerationResult:
         request = json.loads(messages[-1]["content"])
         payload = {
             "action": "answer",
@@ -30,7 +36,9 @@ class _Client:
         return GenerationResult(json.dumps(payload), 1, 1, 1.0, 1.0)
 
 
-def run_offline_smoke(runs: int) -> dict[str, object]:
+def run_offline_smoke(
+    runs: int, jsonl_path: Path | None = None
+) -> dict[str, object]:
     if runs < 1:
         raise ValueError("runs must be positive")
     store = ForgeStore(Path(":memory:"))
@@ -51,15 +59,49 @@ def run_offline_smoke(runs: int) -> dict[str, object]:
         ReasoningController(_Retriever(hit), _Client(), lambda text: len(text.split())),
         store,
     )
-    answers = [
-        service.ask("__missing__" if index == runs - 1 else f"case {index}", "reason")
-        for index in range(runs)
-    ]
+    answers = []
+    if jsonl_path is not None:
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        jsonl_path.write_text("", encoding="utf-8")
+    for index in range(runs):
+        started = time.perf_counter()
+        try:
+            answer = service.ask(
+                "__missing__" if index == runs - 1 else f"case {index}",
+                "reason",
+            )
+            answers.append(answer)
+            record = {
+                "exit_code": 0,
+                "uncited_material_claims": sum(
+                    not claim.evidence_ids for claim in answer.claims
+                ),
+                "active_tokens": sum(
+                    len(item.model_text.split()) for item in answer.evidence
+                ),
+                "peak_vram_mib": 0,
+                "latency_ms": (time.perf_counter() - started) * 1_000,
+                "answer": answer.summary,
+            }
+        except Exception:
+            record = {
+                "exit_code": 1,
+                "uncited_material_claims": 0,
+                "active_tokens": 0,
+                "peak_vram_mib": 0,
+                "latency_ms": (time.perf_counter() - started) * 1_000,
+                "answer": "",
+            }
+        if jsonl_path is not None:
+            with jsonl_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record) + "\n")
+                handle.flush()
     return {
         "runs": runs,
         "completed": len(answers),
         "citations_valid": all(
             store.validate_evidence(item) for answer in answers for item in answer.evidence
         ),
-        "empty_evidence_abstained": answers[-1].status == "abstained",
+        "empty_evidence_abstained": bool(answers)
+        and answers[-1].status == "abstained",
     }

@@ -7,6 +7,7 @@ import time
 import urllib.request
 from collections.abc import Callable
 from dataclasses import replace
+from typing import Any
 
 import httpx
 
@@ -35,7 +36,7 @@ def parse_nvidia_smi(text: str, ram_mib: int) -> HardwareProfile:
     return HardwareProfile(fields[0], int(fields[1].removesuffix(" MiB")), fields[2], ram_mib)
 
 
-def parse_chat_response(payload: dict[str, object]) -> GenerationResult:
+def parse_chat_response(payload: dict[str, Any]) -> GenerationResult:
     choices = payload["choices"]
     usage = payload.get("usage", {})
     timings = payload.get("timings", {})
@@ -81,7 +82,8 @@ def used_vram_mib(
 
 def physical_ram_mib() -> int:
     if os.name != "nt":
-        return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1_048_576)
+        sysconf = getattr(os, "sysconf")
+        return int(sysconf("SC_PAGE_SIZE") * sysconf("SC_PHYS_PAGES") / 1_048_576)
     status = _MemoryStatus()
     status.length = ctypes.sizeof(status)
     if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):

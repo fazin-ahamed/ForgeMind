@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from forgemind.domain import AnswerDraft, EvidencePack, ReasoningLedger, VerifiedAnswer
 from forgemind.store import ForgeStore
 
@@ -25,7 +27,7 @@ def verify_answer(
             unresolved.append(f"Unsupported claim removed: {claim.text}")
     cited = {item for claim in claims for item in claim.evidence_ids}
     if claims and not unresolved:
-        status = "supported"
+        status: Literal["supported", "partial", "abstained"] = "supported"
     elif claims or any(item.startswith("Unsupported claim removed:") for item in unresolved):
         status = "partial"
     else:

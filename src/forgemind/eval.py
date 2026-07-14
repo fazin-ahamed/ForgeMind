@@ -6,6 +6,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 from pydantic import Field, model_validator
@@ -14,6 +15,7 @@ from forgemind.context import assemble_evidence
 from forgemind.domain import (
     AnswerDraft,
     EvidencePack,
+    GenerationResult,
     ReasoningLedger,
     SearchHit,
     StrictModel,
@@ -24,6 +26,27 @@ from forgemind.verification import verify_answer
 
 
 _SYSTEM_NAMES = ("raw", "vector", "hybrid", "forgemind")
+
+
+class EvaluationRetriever(Protocol):
+    def search(self, query: str, limit: int = 20) -> list[SearchHit]: ...
+
+    def search_vector(self, query: str, limit: int = 20) -> list[SearchHit]: ...
+
+
+class EvaluationController(Protocol):
+    def investigate(
+        self, question: str, mode: str = "reason"
+    ) -> tuple[AnswerDraft, ReasoningLedger, list[EvidencePack]]: ...
+
+
+class EvaluationClient(Protocol):
+    def complete(
+        self,
+        messages: list[dict[str, str]],
+        max_tokens: int | None = None,
+        json_schema: dict[str, object] | None = None,
+    ) -> GenerationResult: ...
 
 
 class GoldFact(StrictModel):
@@ -257,9 +280,9 @@ class ControlledSystems:
     def __init__(
         self,
         store: ForgeStore,
-        retriever: object,
-        controller: object,
-        client: object,
+        retriever: EvaluationRetriever,
+        controller: EvaluationController,
+        client: EvaluationClient,
         count_tokens: Callable[[str], int],
         vram_mib: Callable[[], int],
     ) -> None:

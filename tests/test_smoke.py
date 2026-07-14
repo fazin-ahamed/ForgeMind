@@ -57,3 +57,25 @@ def test_offline_reasoning_smoke_verifies_citations_and_abstention() -> None:
         "citations_valid": True,
         "empty_evidence_abstained": True,
     }
+
+
+def test_offline_smoke_writes_one_release_record_per_run(tmp_path: Path) -> None:
+    output = tmp_path / "smoke.jsonl"
+
+    result = run_offline_smoke(3, output)
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+
+    assert result["completed"] == 3
+    assert len(rows) == 3
+    assert all(
+        set(row)
+        == {
+            "exit_code",
+            "uncited_material_claims",
+            "active_tokens",
+            "peak_vram_mib",
+            "latency_ms",
+            "answer",
+        }
+        for row in rows
+    )

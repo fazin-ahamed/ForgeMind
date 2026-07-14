@@ -5,6 +5,7 @@ import json
 import os
 from dataclasses import asdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from forgemind.config import RuntimeConfig
 from forgemind.runtime import (
@@ -13,6 +14,12 @@ from forgemind.runtime import (
     start_with_single_fallback,
     used_vram_mib,
 )
+
+if TYPE_CHECKING:
+    from forgemind.eval import ControlledSystems
+    from forgemind.reasoning import InvestigationService, ReasoningController
+    from forgemind.retrieval import Retriever
+    from forgemind.store import ForgeStore
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -54,6 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     smoke = subparsers.add_parser("smoke")
     smoke.add_argument("--runs", type=int, default=10)
     smoke.add_argument("--offline", action="store_true")
+    smoke.add_argument("--jsonl")
     profile = subparsers.add_parser("profile-scale")
     profile.add_argument("root")
     profile.add_argument("--db", required=True)
@@ -86,7 +94,9 @@ def profile_scale(root: Path, db: Path, max_active_tokens: int) -> dict[str, obj
     }
 
 
-def _build_stack(config: RuntimeConfig, database: Path):
+def _build_stack(
+    config: RuntimeConfig, database: Path
+) -> tuple[ForgeStore, Retriever, LlamaClient, ReasoningController]:
     from forgemind.reasoning import ReasoningController
     from forgemind.retrieval import Embedder, Retriever
     from forgemind.store import ForgeStore
@@ -106,14 +116,18 @@ def _build_stack(config: RuntimeConfig, database: Path):
     return store, retriever, client, controller
 
 
-def _build_service(config: RuntimeConfig, database: Path):
+def _build_service(
+    config: RuntimeConfig, database: Path
+) -> InvestigationService:
     from forgemind.reasoning import InvestigationService
 
     store, _retriever, _client, controller = _build_stack(config, database)
     return InvestigationService(controller, store)
 
 
-def _build_evaluation_systems(config: RuntimeConfig, database: Path):
+def _build_evaluation_systems(
+    config: RuntimeConfig, database: Path
+) -> ControlledSystems:
     from forgemind.eval import ControlledSystems
 
     store, retriever, client, controller = _build_stack(config, database)
@@ -130,17 +144,18 @@ def _build_evaluation_systems(config: RuntimeConfig, database: Path):
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "profile-scale":
-        result = profile_scale(Path(args.root), Path(args.db), args.max_active_tokens)
-        print(json.dumps(result, indent=2))
+        profile = profile_scale(Path(args.root), Path(args.db), args.max_active_tokens)
+        print(json.dumps(profile, indent=2))
         return 0
     if args.command == "smoke":
         if not args.offline:
             raise ValueError("only the deterministic offline smoke is available")
         from forgemind.offline import run_offline_smoke
 
-        result = run_offline_smoke(args.runs)
-        print(json.dumps(result, indent=2))
-        return 0 if result["completed"] == args.runs else 1
+        jsonl_path = Path(args.jsonl) if args.jsonl else None
+        smoke_result = run_offline_smoke(args.runs, jsonl_path)
+        print(json.dumps(smoke_result, indent=2))
+        return 0 if smoke_result["completed"] == args.runs else 1
 
     if args.command in {"ingest", "search", "eval-retrieval"}:
         from forgemind.ingest import ingest_project
@@ -237,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     context = Path(args.context).read_text(encoding="utf-8")
     with start_with_single_fallback(config) as server:
-        result = LlamaClient(server.config).complete(
+        generation = LlamaClient(server.config).complete(
             [
                 {"role": "system", "content": "Answer only from the supplied context."},
                 {
@@ -246,5 +261,9 @@ def main(argv: list[str] | None = None) -> int:
                 },
             ]
         )
-    print(json.dumps(asdict(result) | {"total_ms": result.total_ms}, indent=2))
+    print(
+        json.dumps(
+            asdict(generation) | {"total_ms": generation.total_ms}, indent=2
+        )
+    )
     return 0
