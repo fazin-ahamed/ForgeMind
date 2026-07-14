@@ -1,0 +1,3 @@
+2026-04-19T08:42:11Z WARN session_decode subject=8f14e45f-ea47-4f8d-a821-9b4dd4f65a2c parsed_user_id=8
+2026-04-19T08:42:11Z ERROR user_lookup user_id=8 result=not_found expected_type=uuid
+2026-04-19T08:42:11Z INFO http_request route=/account status=401 reason=session_user_missing

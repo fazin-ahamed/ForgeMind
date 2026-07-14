@@ -145,5 +145,13 @@ def test_llama_client_posts_deterministic_chat_request(tmp_path: Path, monkeypat
         "temperature": 0,
         "max_tokens": 7,
         "cache_prompt": True,
-        "response_format": {"type": "json_schema", "schema": schema},
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "forgemind_response",
+                "schema": schema,
+                "strict": True,
+            },
+        },
+        "chat_template_kwargs": {"enable_thinking": False},
     }

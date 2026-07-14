@@ -14,9 +14,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="forgemind")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("doctor")
-    ask = subparsers.add_parser("ask-raw")
-    ask.add_argument("question")
-    ask.add_argument("--context", required=True)
+    raw = subparsers.add_parser("ask-raw")
+    raw.add_argument("question")
+    raw.add_argument("--context", required=True)
     ingest = subparsers.add_parser("ingest")
     ingest.add_argument("root")
     ingest.add_argument("--db", required=True)
@@ -28,11 +28,52 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("cases")
     evaluate.add_argument("--db", required=True)
     evaluate.add_argument("--min-recall20", type=float, default=0.70)
+    ask = subparsers.add_parser("ask")
+    ask.add_argument("question")
+    ask.add_argument("--db", required=True)
+    ask.add_argument(
+        "--mode", choices=("retrieve", "reason", "investigate"), default="reason"
+    )
+    ask.add_argument("--json", action="store_true", dest="as_json")
+    web = subparsers.add_parser("web")
+    web.add_argument("--db", required=True)
+    web.add_argument("--port", type=int, default=8000)
+    smoke = subparsers.add_parser("smoke")
+    smoke.add_argument("--runs", type=int, default=10)
+    smoke.add_argument("--offline", action="store_true")
     return parser
+
+
+def _build_service(config: RuntimeConfig, database: Path):
+    from forgemind.reasoning import InvestigationService, ReasoningController
+    from forgemind.retrieval import Embedder, Retriever
+    from forgemind.store import ForgeStore
+
+    if not database.is_file():
+        raise ValueError(f"archive database not found: {database}")
+    embedder = Embedder()
+    store = ForgeStore(database)
+    store.enable_vectors(embedder.dimensions)
+    # ponytail: UTF-8 bytes safely overestimate tokens; use batched llama tokenization if pack density becomes limiting.
+    controller = ReasoningController(
+        Retriever(store, embedder),
+        LlamaClient(config),
+        lambda text: len(text.encode("utf-8")),
+    )
+    return InvestigationService(controller, store)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "smoke":
+        if not args.offline:
+            raise ValueError("only the deterministic offline smoke is available")
+        from forgemind.offline import run_offline_smoke
+
+        result = run_offline_smoke(args.runs)
+        print(json.dumps(result, indent=2))
+        return 0 if result["completed"] == args.runs else 1
+
     if args.command in {"ingest", "search", "eval-retrieval"}:
         from forgemind.ingest import ingest_project
         from forgemind.retrieval import Embedder, Retriever
@@ -74,6 +115,24 @@ def main(argv: list[str] | None = None) -> int:
                 {"hardware": asdict(probe_hardware()), "runtime": config.as_dict()}, indent=2
             )
         )
+        return 0
+    if args.command in {"ask", "web"}:
+        with start_with_single_fallback(config) as server:
+            service = _build_service(server.config, Path(args.db))
+            if args.command == "web":
+                import uvicorn
+
+                from forgemind.web import create_app
+
+                uvicorn.run(create_app(service), host="127.0.0.1", port=args.port)
+                return 0
+            answer = service.ask(args.question, args.mode)
+        if args.as_json:
+            print(answer.model_dump_json(indent=2))
+        else:
+            print(answer.summary)
+            for claim in answer.claims:
+                print(f"- {claim.text} [{', '.join(claim.evidence_ids)}]")
         return 0
     context = Path(args.context).read_text(encoding="utf-8")
     with start_with_single_fallback(config) as server:

@@ -3,13 +3,30 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
+from threading import Lock
 
 from forgemind.context import assemble_evidence
-from forgemind.domain import AnswerDraft, ControllerDecision, EvidencePack, ReasoningLedger
+from forgemind.domain import (
+    AnswerDraft,
+    ControllerDecision,
+    EvidencePack,
+    ReasoningLedger,
+    VerifiedAnswer,
+)
+from forgemind.store import ForgeStore
+from forgemind.verification import verify_answer
 
 
 MODE_CYCLES = {"retrieve": 1, "reason": 3, "investigate": 6}
 STOPPED = ["Investigation stopped without sufficient evidence."]
+
+
+def _json_text(text: str) -> str:
+    stripped = text.strip()
+    lines = stripped.splitlines()
+    if len(lines) >= 3 and lines[0].startswith("```") and lines[-1] == "```":
+        return "\n".join(lines[1:-1])
+    return stripped
 
 
 class ReasoningController:
@@ -63,6 +80,7 @@ class ReasoningController:
             packs.append(pack)
             evidence_ids.extend(new_ids)
             seen_evidence.update(new_ids)
+            ledger = ledger.model_copy(update={"evidence_ids": list(evidence_ids)})
 
             messages = [
                 {"role": "system", "content": self.system_prompt},
@@ -83,7 +101,7 @@ class ReasoningController:
                 json_schema=ControllerDecision.model_json_schema(),
             )
             try:
-                decision = ControllerDecision.model_validate_json(result.text)
+                decision = ControllerDecision.model_validate_json(_json_text(result.text))
             except ValueError:
                 repair = self.client.complete(
                     [
@@ -95,7 +113,7 @@ class ReasoningController:
                     ],
                     json_schema=ControllerDecision.model_json_schema(),
                 )
-                decision = ControllerDecision.model_validate_json(repair.text)
+                decision = ControllerDecision.model_validate_json(_json_text(repair.text))
 
             ledger = decision.ledger.model_copy(
                 update={
@@ -117,3 +135,16 @@ class ReasoningController:
             ledger,
             packs,
         )
+
+
+class InvestigationService:
+    def __init__(self, controller: ReasoningController, store: ForgeStore) -> None:
+        self.controller = controller
+        self.store = store
+        # ponytail: one local investigation at a time; use per-request stores if multi-user throughput matters.
+        self._lock = Lock()
+
+    def ask(self, question: str, mode: str = "reason") -> VerifiedAnswer:
+        with self._lock:
+            draft, ledger, packs = self.controller.investigate(question, mode)
+            return verify_answer(draft, ledger, packs, self.store)

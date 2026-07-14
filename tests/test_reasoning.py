@@ -4,6 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 from forgemind.domain import (
+    AnswerDraft,
+    Claim,
     ControllerDecision,
     GenerationResult,
     ReasoningLedger,
@@ -17,6 +19,21 @@ def test_controller_decision_requires_query_for_retrieve_action() -> None:
 
     with pytest.raises(ValidationError):
         ControllerDecision(action="retrieve", ledger=ledger)
+
+
+def test_answer_payload_takes_precedence_over_conflicting_action() -> None:
+    decision = ControllerDecision(
+        action="retrieve",
+        ledger=ReasoningLedger(goal="why"),
+        query="why",
+        answer=AnswerDraft(
+            summary="Supported",
+            claims=[Claim(text="Fact", evidence_ids=["c1"])],
+        ),
+    )
+
+    assert decision.action == "answer"
+    assert decision.query is None
 
 
 def test_ledger_starts_compact_and_bounded() -> None:
@@ -49,9 +66,13 @@ class FakeRetriever:
 class RepeatingClient:
     def __init__(self) -> None:
         self.calls = 0
+        self.seen_evidence_ids: list[str] = []
 
     def complete(self, messages, max_tokens=None, json_schema=None) -> GenerationResult:
         self.calls += 1
+        self.seen_evidence_ids = json.loads(messages[-1]["content"])["ledger"][
+            "evidence_ids"
+        ]
         payload = {
             "action": "retrieve",
             "ledger": {"goal": "why"},
@@ -69,6 +90,7 @@ def test_controller_stops_when_retrieval_adds_no_evidence() -> None:
     draft, ledger, packs = controller.investigate("why", mode="reason")
 
     assert client.calls == 1
+    assert client.seen_evidence_ids == ["c1"]
     assert ledger.retrieval_queries == ["why", "parseInt user id"]
     assert ledger.evidence_ids == ["c1"]
     assert len(packs) == 1
@@ -91,7 +113,7 @@ class RepairingClient:
                 "claims": [{"text": "ID was parsed as an integer.", "evidence_ids": ["c1"]}],
             },
         }
-        return GenerationResult(json.dumps(payload), 1, 1, 1.0, 1.0)
+        return GenerationResult(f"```json\n{json.dumps(payload)}\n```", 1, 1, 1.0, 1.0)
 
 
 def test_controller_repairs_invalid_model_json_once() -> None:

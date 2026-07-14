@@ -3,6 +3,7 @@ from pathlib import Path
 
 import scripts.runtime_smoke as smoke
 from forgemind.domain import GenerationResult, HardwareProfile
+from forgemind.offline import run_offline_smoke
 
 
 def test_runtime_smoke_writes_ten_run_record(tmp_path: Path, monkeypatch) -> None:
@@ -45,3 +46,14 @@ def test_runtime_smoke_writes_ten_run_record(tmp_path: Path, monkeypatch) -> Non
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert len(payload["runs"]) == 10
     assert payload["hardware"]["vram_mib"] == 12_288
+
+
+def test_offline_reasoning_smoke_verifies_citations_and_abstention() -> None:
+    result = run_offline_smoke(10)
+
+    assert result == {
+        "runs": 10,
+        "completed": 10,
+        "citations_valid": True,
+        "empty_evidence_abstained": True,
+    }

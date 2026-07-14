@@ -5,6 +5,7 @@ from pathlib import Path
 import forgemind.cli as cli
 from forgemind.cli import build_parser, main
 from forgemind.domain import GenerationResult, HardwareProfile
+from forgemind.domain import VerifiedAnswer
 
 
 def test_cli_parses_raw_question_and_context() -> None:
@@ -99,3 +100,53 @@ def test_archive_commands_do_not_require_llama_environment(
     assert main(["search", "run", "--db", str(database)]) == 0
     hits = json.loads(capsys.readouterr().out)
     assert hits[0]["path"] == "app.py"
+
+
+def test_offline_reasoning_smoke_command_needs_no_model_environment(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.delenv("FORGEMIND_LLAMA_SERVER", raising=False)
+    monkeypatch.delenv("FORGEMIND_MODEL", raising=False)
+
+    assert main(["smoke", "--runs", "10", "--offline"]) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["completed"] == 10
+    assert result["empty_evidence_abstained"] is True
+
+
+def test_ask_command_returns_only_verified_service_output(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    server_path = tmp_path / "server.exe"
+    model = tmp_path / "model.gguf"
+    server_path.write_bytes(b"exe")
+    model.write_bytes(b"model")
+    monkeypatch.setenv("FORGEMIND_LLAMA_SERVER", str(server_path))
+    monkeypatch.setenv("FORGEMIND_MODEL", str(model))
+
+    class FakeServer:
+        def __init__(self, config) -> None:
+            self.config = config
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    class FakeService:
+        def ask(self, question: str, mode: str) -> VerifiedAnswer:
+            return VerifiedAnswer(
+                summary="Verified",
+                claims=[],
+                unresolved=[],
+                cycles=1,
+                status="supported",
+            )
+
+    monkeypatch.setattr(cli, "start_with_single_fallback", FakeServer)
+    monkeypatch.setattr(cli, "_build_service", lambda config, db: FakeService(), raising=False)
+
+    assert main(["ask", "why", "--db", str(tmp_path / "db.sqlite"), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["summary"] == "Verified"

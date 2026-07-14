@@ -18,13 +18,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.4,<9"]
+dev = ["httpx2>=2.6,<3", "pytest>=8.4,<9"]
 
 [project.scripts]
 forgemind = "forgemind.cli:main"
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.setuptools.package-data]
+forgemind = ["prompts/*.txt", "static/*.css", "templates/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

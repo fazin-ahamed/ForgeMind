@@ -23,11 +23,20 @@ def verify_answer(
             claims.append(claim)
         else:
             unresolved.append(f"Unsupported claim removed: {claim.text}")
-    status = "supported" if claims and not unresolved else "partial" if claims or unresolved else "abstained"
+    cited = {item for claim in claims for item in claim.evidence_ids}
+    if claims and not unresolved:
+        status = "supported"
+    elif claims or any(item.startswith("Unsupported claim removed:") for item in unresolved):
+        status = "partial"
+    else:
+        status = "abstained"
     return VerifiedAnswer(
         summary=draft.summary if claims else "Insufficient verified evidence",
         claims=claims,
         unresolved=unresolved,
         cycles=ledger.cycle,
         status=status,
+        retrieval_queries=ledger.retrieval_queries,
+        evidence_ids=ledger.evidence_ids,
+        evidence=[item for item_id, item in evidence.items() if item_id in cited],
     )

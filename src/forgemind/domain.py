@@ -136,9 +136,13 @@ class ControllerDecision(StrictModel):
 
     @model_validator(mode="after")
     def validate_payload(self) -> "ControllerDecision":
+        if self.answer is not None:
+            self.action = "answer"
+            self.query = None
+            return self
         if self.action == "retrieve" and not self.query:
             raise ValueError("retrieve action requires query")
-        if self.action == "answer" and self.answer is None:
+        if self.action == "answer":
             raise ValueError("answer action requires answer")
         return self
 
@@ -149,3 +153,6 @@ class VerifiedAnswer(StrictModel):
     unresolved: list[str]
     cycles: int = Field(ge=0, le=6)
     status: Literal["supported", "partial", "abstained"]
+    retrieval_queries: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    evidence: list[EvidenceItem] = Field(default_factory=list)

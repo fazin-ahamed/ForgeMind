@@ -186,7 +186,15 @@ class LlamaClient:
             "cache_prompt": True,
         }
         if json_schema is not None:
-            body["response_format"] = {"type": "json_schema", "schema": json_schema}
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "forgemind_response",
+                    "schema": json_schema,
+                    "strict": True,
+                },
+            }
+            body["chat_template_kwargs"] = {"enable_thinking": False}
         with httpx.Client(timeout=self.config.timeout_seconds) as client:
             response = client.post(
                 f"{self.config.server_url}/v1/chat/completions",

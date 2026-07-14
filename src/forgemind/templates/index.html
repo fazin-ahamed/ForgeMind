@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ForgeMind</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <strong>ForgeMind</strong>
+    <span>Local runtime</span>
+  </header>
+  <main class="workspace">
+    <section class="investigation" aria-labelledby="question-label">
+      <form id="ask-form">
+        <label id="question-label" for="question">Project question</label>
+        <textarea id="question" required maxlength="4000">Why did sessions fail after the April migration?</textarea>
+        <div class="actions">
+          <button id="submit" type="submit">Investigate</button>
+          <fieldset>
+            <legend>Investigation mode</legend>
+            <label><input type="radio" name="mode" value="retrieve"><span>Retrieve</span></label>
+            <label><input type="radio" name="mode" value="reason"><span>Reason</span></label>
+            <label><input type="radio" name="mode" value="investigate" checked><span>Investigate</span></label>
+          </fieldset>
+        </div>
+      </form>
+      <section class="answer" aria-labelledby="answer-title" aria-live="polite">
+        <div class="answer-heading">
+          <h1 id="answer-title">Verified answer</h1>
+          <output id="status">Ready</output>
+        </div>
+        <p id="summary">Ask a project question to begin.</p>
+        <div id="claims"></div>
+      </section>
+    </section>
+    <aside class="ledger" aria-labelledby="ledger-title">
+      <h2 id="ledger-title">Investigation ledger</h2>
+      <section><h3>Cycle</h3><output id="cycles">0</output></section>
+      <section><h3>Retrieval queries</h3><ol id="queries"></ol></section>
+      <section><h3>Evidence IDs</h3><ol id="evidence-ids"></ol></section>
+      <section><h3>Unresolved items</h3><ol id="unresolved"></ol></section>
+    </aside>
+  </main>
+  <script>
+    const form = document.querySelector('#ask-form');
+    const submit = document.querySelector('#submit');
+    const status = document.querySelector('#status');
+    const summary = document.querySelector('#summary');
+    const claims = document.querySelector('#claims');
+
+    function fillList(selector, values) {
+      const list = document.querySelector(selector);
+      list.replaceChildren(...values.map(value => {
+        const item = document.createElement('li');
+        item.textContent = value;
+        return item;
+      }));
+    }
+
+    function render(data) {
+      status.textContent = data.status;
+      summary.textContent = data.summary;
+      document.querySelector('#cycles').textContent = data.cycles;
+      fillList('#queries', data.retrieval_queries);
+      fillList('#evidence-ids', data.evidence_ids);
+      fillList('#unresolved', data.unresolved);
+      const evidence = new Map(data.evidence.map(item => [item.id, item]));
+      claims.replaceChildren(...data.claims.map((claim, index) => {
+        const details = document.createElement('details');
+        details.className = 'claim';
+        details.open = true;
+        const heading = document.createElement('summary');
+        heading.textContent = `${index + 1}. ${claim.text}`;
+        details.append(heading);
+        claim.evidence_ids.forEach(id => {
+          const item = evidence.get(id);
+          if (!item) return;
+          const citation = document.createElement('code');
+          citation.textContent = `${item.path}:${item.start_line}-${item.end_line}`;
+          const source = document.createElement('pre');
+          source.textContent = item.text;
+          details.append(citation, source);
+        });
+        return details;
+      }));
+    }
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      submit.disabled = true;
+      submit.textContent = 'Investigating…';
+      status.textContent = 'working';
+      try {
+        const response = await fetch('/api/ask', {
+          method: 'POST',
+          headers: {'content-type': 'application/json'},
+          body: JSON.stringify({
+            question: document.querySelector('#question').value,
+            mode: new FormData(form).get('mode')
+          })
+        });
+        if (!response.ok) throw new Error(`Request failed (${response.status})`);
+        render(await response.json());
+      } catch (error) {
+        status.textContent = 'error';
+        summary.textContent = error.message;
+      } finally {
+        submit.disabled = false;
+        submit.textContent = 'Investigate';
+      }
+    });
+  </script>
+</body>
+</html>
