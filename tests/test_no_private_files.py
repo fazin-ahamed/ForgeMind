@@ -26,3 +26,12 @@ def test_git_index_contains_no_private_artifacts() -> None:
 def test_clean_checkout_automation_is_public() -> None:
     assert (ROOT / ".github/workflows/ci.yml").is_file()
     assert (ROOT / "scripts/clean_checkout_test.ps1").is_file()
+
+
+def test_clean_checkout_automation_preserves_imports_and_native_failures() -> None:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    script = (ROOT / "scripts/clean_checkout_test.ps1").read_text(encoding="utf-8")
+
+    assert "uv run python -m pytest" in workflow
+    assert "uv run python -m pytest" in script
+    assert "$LASTEXITCODE" in script

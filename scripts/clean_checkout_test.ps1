@@ -3,6 +3,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Assert-NativeSuccess([string]$Operation) {
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Operation failed with exit code $LASTEXITCODE"
+    }
+}
+
 $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $resolvedDestination = [System.IO.Path]::GetFullPath($Destination)
 $comparison = if ($IsWindows) {
@@ -23,12 +30,17 @@ if (Test-Path -LiteralPath $resolvedDestination) {
 }
 
 git clone --no-local . $resolvedDestination
+Assert-NativeSuccess "git clone"
 Push-Location $resolvedDestination
 try {
     uv sync --frozen --extra dev
+    Assert-NativeSuccess "uv sync"
     uv run ruff check .
+    Assert-NativeSuccess "Ruff"
     uv run mypy src
-    uv run pytest -q -m "not model and not benchmark"
+    Assert-NativeSuccess "mypy"
+    uv run python -m pytest -q -m "not model and not benchmark"
+    Assert-NativeSuccess "pytest"
 } finally {
     Pop-Location
 }
