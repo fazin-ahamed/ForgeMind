@@ -46,15 +46,29 @@ class Retriever:
             for chunk_id, _distance in self.store.vector_search(vector, limit * 2)
         ]
         fused = rrf([lexical, semantic])[:limit]
-        rows = self.store.chunks_by_ids([chunk_id for chunk_id, _score in fused])
+        return self._hits(fused, (("lexical", lexical), ("semantic", semantic)))
+
+    def search_vector(self, query: str, limit: int = 20) -> list[SearchHit]:
+        vector = self.embedder.encode([query])[0]
+        ranked = self.store.vector_search(vector, limit)
+        ids = [chunk_id for chunk_id, _distance in ranked]
+        scored = [(chunk_id, 1.0 / (1.0 + distance)) for chunk_id, distance in ranked]
+        return self._hits(scored, (("semantic", ids),))
+
+    def _hits(
+        self,
+        ranked: list[tuple[str, float]],
+        rankings: tuple[tuple[str, list[str]], ...],
+    ) -> list[SearchHit]:
+        rows = self.store.chunks_by_ids([chunk_id for chunk_id, _score in ranked])
         hits: list[SearchHit] = []
-        for chunk_id, score in fused:
+        for chunk_id, score in ranked:
             row = rows.get(chunk_id)
             if row is None:
                 continue
             channels = tuple(
                 name
-                for name, ranking in (("lexical", lexical), ("semantic", semantic))
+                for name, ranking in rankings
                 if chunk_id in ranking
             )
             hits.append(

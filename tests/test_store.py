@@ -29,3 +29,17 @@ def test_chunks_replace_atomically_and_events_are_idempotent(tmp_path: Path) -> 
 
     assert store.count("chunks") == 1
     assert store.count("events") == 1
+
+
+def test_active_hits_are_deterministically_path_ordered(tmp_path: Path) -> None:
+    store = ForgeStore(tmp_path / "forge.sqlite")
+    second = SourceRecord.from_text("z.py", "second", 1)
+    first = SourceRecord.from_text("a.py", "first", 1)
+    for source, chunk_id in ((second, "c2"), (first, "c1")):
+        store.upsert_source(source)
+        store.replace_chunks(
+            source.id,
+            [ChunkRecord(chunk_id, source.id, source.path, 1, 1, source.text)],
+        )
+
+    assert [hit.path for hit in store.active_hits()] == ["a.py", "z.py"]

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from forgemind.domain import ChunkRecord, SourceRecord
-from forgemind.retrieval import rrf
+from forgemind.retrieval import Retriever, rrf
 from forgemind.store import ForgeStore
 
 
@@ -30,3 +30,22 @@ def test_fts_search_finds_exact_identifier(tmp_path: Path) -> None:
     store.replace_chunks(source.id, [chunk])
 
     assert store.fts_search("parseInt", 5)[0] == "chunk-1"
+
+
+def test_vector_only_retrieval_does_not_use_lexical_channel(tmp_path: Path) -> None:
+    store = ForgeStore(tmp_path / "forge.sqlite")
+    store.enable_vectors(3)
+    source = SourceRecord.from_text("session.py", "UUID migration", 1)
+    chunk = ChunkRecord("chunk-1", source.id, source.path, 1, 1, source.text)
+    store.upsert_source(source)
+    store.replace_chunks(source.id, [chunk])
+    store.put_embedding(chunk.id, [1.0, 0.0, 0.0])
+
+    class FixedEmbedder:
+        def encode(self, texts: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0, 0.0] for _ in texts]
+
+    hits = Retriever(store, FixedEmbedder()).search_vector("uuid", 1)
+
+    assert [hit.chunk_id for hit in hits] == ["chunk-1"]
+    assert hits[0].channels == ("semantic",)

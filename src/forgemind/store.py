@@ -8,7 +8,13 @@ from typing import Iterator
 
 import sqlite_vec
 
-from forgemind.domain import ChunkRecord, EvidenceItem, ProjectEvent, SourceRecord
+from forgemind.domain import (
+    ChunkRecord,
+    EvidenceItem,
+    ProjectEvent,
+    SearchHit,
+    SourceRecord,
+)
 
 
 SCHEMA = """
@@ -228,6 +234,27 @@ class ForgeStore:
             chunk_ids,
         ).fetchall()
         return {str(row["id"]): row for row in rows}
+
+    def active_hits(self) -> list[SearchHit]:
+        rows = self.connection.execute(
+            "SELECT chunks.*, sources.sha256 AS source_sha256 "
+            "FROM chunks JOIN sources ON sources.id = chunks.source_id "
+            "ORDER BY chunks.path, chunks.start_line, chunks.id"
+        ).fetchall()
+        return [
+            SearchHit(
+                row["id"],
+                row["source_id"],
+                row["source_sha256"],
+                row["path"],
+                row["start_line"],
+                row["end_line"],
+                row["text"],
+                0.0,
+                ("raw",),
+            )
+            for row in rows
+        ]
 
     def validate_evidence(self, item: EvidenceItem) -> bool:
         row = self.connection.execute(
