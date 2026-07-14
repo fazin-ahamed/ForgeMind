@@ -3,9 +3,13 @@ requires = ["setuptools>=80"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "forgemind"
+name = "forgemind-runtime"
 version = "0.1.0"
+description = "Evidence-first context compiler for consumer-scale local language models"
+readme = "README.md"
 requires-python = ">=3.11,<3.13"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
   "fastapi>=0.116,<1",
   "httpx>=0.28,<1",
@@ -19,7 +23,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["httpx2>=2.6,<3", "pytest>=8.4,<9"]
+dev = [
+  "httpx2>=2.6,<3",
+  "mypy>=1.18,<2",
+  "pip-audit>=2.9,<3",
+  "pytest>=8.4,<9",
+  "ruff>=0.14,<1",
+]
 eval = ["datasets>=4,<5"]
 
 [project.scripts]
@@ -33,3 +43,12 @@ forgemind = ["prompts/*.txt", "static/*.css", "templates/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["forgemind"]
