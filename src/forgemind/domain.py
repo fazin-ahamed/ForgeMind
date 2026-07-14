@@ -55,3 +55,14 @@ class ProjectEvent:
     commit: str
     occurred_at: str
     summary: str
+
+
+@dataclass(frozen=True, slots=True)
+class SearchHit:
+    chunk_id: str
+    path: str
+    start_line: int
+    end_line: int
+    text: str
+    score: float
+    channels: tuple[str, ...]

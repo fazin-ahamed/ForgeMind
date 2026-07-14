@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import re
 from pathlib import Path
 
 import sqlite_vec
@@ -139,3 +140,24 @@ class ForgeStore:
             (sqlite_vec.serialize_float32(vector), limit),
         ).fetchall()
         return [(str(row[0]), float(row[1])) for row in rows]
+
+    def fts_search(self, query: str, limit: int) -> list[str]:
+        tokens = re.findall(r"[\w./:-]+", query, flags=re.UNICODE)
+        if not tokens:
+            return []
+        match = " OR ".join(f'"{token}"' for token in tokens)
+        rows = self.connection.execute(
+            "SELECT chunk_id FROM chunks_fts WHERE chunks_fts MATCH ? "
+            "ORDER BY bm25(chunks_fts) LIMIT ?",
+            (match, limit),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, sqlite3.Row]:
+        if not chunk_ids:
+            return {}
+        marks = ",".join("?" for _ in chunk_ids)
+        rows = self.connection.execute(
+            f"SELECT * FROM chunks WHERE id IN ({marks})", chunk_ids
+        ).fetchall()
+        return {str(row["id"]): row for row in rows}
