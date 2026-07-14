@@ -1,6 +1,7 @@
 import subprocess
 from pathlib import Path
 
+import httpx
 import pytest
 
 from forgemind.config import RuntimeConfig
@@ -219,3 +220,39 @@ def test_llama_client_posts_deterministic_chat_request(tmp_path: Path, monkeypat
         },
         "chat_template_kwargs": {"enable_thinking": False},
     }
+
+
+def test_llama_client_retries_one_timeout(tmp_path: Path, monkeypatch) -> None:
+    attempts = 0
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "recovered"}}]}
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            assert timeout == 240.0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, url: str, json: dict[str, object]) -> FakeResponse:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise httpx.ReadTimeout("transient stall")
+            return FakeResponse()
+
+    monkeypatch.setattr("forgemind.runtime.httpx.Client", FakeClient)
+    config = RuntimeConfig(tmp_path / "server", tmp_path / "model")
+
+    result = LlamaClient(config).complete([{"role": "user", "content": "hi"}])
+
+    assert attempts == 2
+    assert result.text == "recovered"

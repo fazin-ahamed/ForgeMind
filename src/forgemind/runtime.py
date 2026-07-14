@@ -240,13 +240,19 @@ class LlamaClient:
                 },
             }
             body["chat_template_kwargs"] = {"enable_thinking": False}
-        with httpx.Client(timeout=self.config.timeout_seconds) as client:
-            response = client.post(
-                f"{self.config.server_url}/v1/chat/completions",
-                json=body,
-            )
-            response.raise_for_status()
-            return parse_chat_response(response.json())
+        for attempt in range(2):
+            try:
+                with httpx.Client(timeout=self.config.timeout_seconds) as client:
+                    response = client.post(
+                        f"{self.config.server_url}/v1/chat/completions",
+                        json=body,
+                    )
+                    response.raise_for_status()
+                    return parse_chat_response(response.json())
+            except httpx.TimeoutException:
+                if attempt == 1:
+                    raise
+        raise AssertionError("chat retry loop did not return or raise")
 
     def count_tokens(self, text: str) -> int:
         with httpx.Client(timeout=self.config.timeout_seconds) as client:
