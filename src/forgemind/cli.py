@@ -432,14 +432,23 @@ def evaluate_benchmark(
         archive_id: _prepared_database(grouped[0], database_root)
         for archive_id, grouped in groups.items()
     }
-    with start_with_single_fallback(benchmark_config) as server:
-        if "raw32" in names and server.config.context_tokens != 32_768:
-            raise RuntimeError("raw32 server did not retain 32,768-token context")
-        model_sha256 = sha256_path(server.config.model)
-        config_sha256 = hashlib.sha256(
-            json.dumps(server.config.as_dict(), sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        for archive_id, grouped in groups.items():
+    resolved_config: RuntimeConfig | None = None
+    model_sha256: str | None = None
+    config_sha256: str | None = None
+    for archive_id, grouped in groups.items():
+        with start_with_single_fallback(resolved_config or benchmark_config) as server:
+            if "raw32" in names and server.config.context_tokens != 32_768:
+                raise RuntimeError("raw32 server did not retain 32,768-token context")
+            if resolved_config is None:
+                resolved_config = server.config
+                model_sha256 = sha256_path(server.config.model)
+                config_sha256 = hashlib.sha256(
+                    json.dumps(server.config.as_dict(), sort_keys=True).encode("utf-8")
+                ).hexdigest()
+            elif server.config != resolved_config:
+                raise RuntimeError("benchmark server profile changed between archives")
+            assert model_sha256 is not None
+            assert config_sha256 is not None
             systems = _build_evaluation_systems(
                 server.config,
                 databases[archive_id],
@@ -455,14 +464,17 @@ def evaluate_benchmark(
                 on_run=partial(write_run, runs_path),
             )
             existing.extend(new_runs)
-        provenance = _benchmark_provenance(
-            server.config,
-            model_sha256,
-            config_sha256,
-            database_root,
-            runtime_path,
-            cases,
-        )
+    assert resolved_config is not None
+    assert model_sha256 is not None
+    assert config_sha256 is not None
+    provenance = _benchmark_provenance(
+        resolved_config,
+        model_sha256,
+        config_sha256,
+        database_root,
+        runtime_path,
+        cases,
+    )
     finalize_run_group(runs_directory, cases, names, provenance)
     return {
         "cases": len(cases),

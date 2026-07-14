@@ -443,7 +443,11 @@ def test_evaluate_freezes_every_requested_system(
     archive.mkdir(parents=True)
     (archive / "evidence.txt").write_text("evidence", encoding="utf-8")
     archive_sha256 = sha256_path(archive)
-    cases.write_text(
+    second_archive = tmp_path / "archives" / "memory-32k"
+    second_archive.mkdir(parents=True)
+    (second_archive / "evidence.txt").write_text("memory", encoding="utf-8")
+    second_archive_sha256 = sha256_path(second_archive)
+    runtime_cases = [
         RuntimeCase(
             id="c1",
             question="q",
@@ -453,13 +457,29 @@ def test_evaluate_freezes_every_requested_system(
             archive_path=str(archive),
             archive_sha256=archive_sha256,
             archived_tokens=32_000,
-        ).model_dump_json()
-        + "\n",
+        ),
+        RuntimeCase(
+            id="c2",
+            question="q2",
+            capability="memory",
+            archive_band="32k",
+            archive_id="memory-32k",
+            archive_path=str(second_archive),
+            archive_sha256=second_archive_sha256,
+            archived_tokens=32_000,
+        ),
+    ]
+    cases.write_text(
+        "".join(case.model_dump_json() + "\n" for case in runtime_cases),
         encoding="utf-8",
     )
 
+    server_starts = 0
+
     class FakeServer:
         def __init__(self, config) -> None:
+            nonlocal server_starts
+            server_starts += 1
             self.config = config
 
         def __enter__(self):
@@ -471,7 +491,7 @@ def test_evaluate_freezes_every_requested_system(
     class Systems:
         def raw(self, case: RuntimeCase) -> BenchmarkRun:
             return BenchmarkRun(
-                run_id="r1",
+                run_id=f"r-{case.id}",
                 run_group_id="g1",
                 system="raw",
                 case_id=case.id,
@@ -520,6 +540,18 @@ def test_evaluate_freezes_every_requested_system(
         ),
         encoding="utf-8",
     )
+    second_database = databases / "memory-32k.sqlite"
+    second_database.write_bytes(b"sqlite-memory")
+    (databases / "memory-32k.json").write_text(
+        json.dumps(
+            {
+                "archive_sha256": second_archive_sha256,
+                "embedder_revision": "BAAI/bge-small-en-v1.5@5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+                "database_sha256": sha256_path(second_database),
+            }
+        ),
+        encoding="utf-8",
+    )
     freeze = tmp_path / "freeze"
     monkeypatch.setattr(cli, "_benchmark_provenance", lambda *args: {})
 
@@ -543,6 +575,7 @@ def test_evaluate_freezes_every_requested_system(
 
     assert (freeze / "runs.jsonl").is_file()
     assert (freeze / "run-manifest.json").is_file()
+    assert server_starts == 2
     assert "raw" in json.loads(capsys.readouterr().out)["systems"]
 
 
