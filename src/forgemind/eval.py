@@ -29,6 +29,7 @@ from forgemind.verification import verify_answer
 
 
 _SYSTEM_NAMES = ("raw", "vector", "hybrid", "forgemind", "raw32")
+ANSWER_MAX_TOKENS = 1_536
 
 
 class EvaluationRetriever(Protocol):
@@ -267,7 +268,11 @@ class ControlledSystems:
             [
                 {
                     "role": "system",
-                    "content": "Answer only from supplied evidence. Cite evidence IDs. /no_think",
+                    "content": (
+                        "Answer only from supplied evidence. Be compact: no more than "
+                        "four claims, do not quote long passages, and cite only the "
+                        "necessary evidence IDs. /no_think"
+                    ),
                 },
                 {
                     "role": "user",
@@ -280,9 +285,30 @@ class ControlledSystems:
                     ),
                 },
             ],
+            max_tokens=ANSWER_MAX_TOKENS,
             json_schema=AnswerDraft.model_json_schema(),
         )
-        draft = AnswerDraft.model_validate_json(result.text)
+        generations = [result]
+        try:
+            draft = AnswerDraft.model_validate_json(result.text)
+        except ValueError:
+            repair = self.client.complete(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Return compact valid JSON matching the provided schema. "
+                            "Preserve supported claims and evidence IDs, use no more "
+                            "than four claims, and omit repetition. /no_think"
+                        ),
+                    },
+                    {"role": "user", "content": result.text},
+                ],
+                max_tokens=ANSWER_MAX_TOKENS,
+                json_schema=AnswerDraft.model_json_schema(),
+            )
+            generations.append(repair)
+            draft = AnswerDraft.model_validate_json(repair.text)
         ledger = ReasoningLedger(
             goal=case.question,
             cycle=1,
@@ -296,7 +322,7 @@ class ControlledSystems:
             draft,
             answer,
             [pack],
-            [result],
+            generations,
             started_at,
             started,
             vram_before,

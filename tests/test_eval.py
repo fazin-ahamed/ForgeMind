@@ -183,6 +183,66 @@ def test_vector_adapter_uses_runtime_evidence_without_gold_manifest(
     assert systems.hybrid(case).system == "hybrid"
 
 
+def test_one_shot_repairs_truncated_json_once(tmp_path: Path) -> None:
+    store = ForgeStore(tmp_path / "forge.sqlite")
+    source = SourceRecord.from_text("session.py", "UUID migration", 1)
+    store.upsert_source(source)
+    hit = SearchHit(
+        "c1",
+        source.id,
+        source.sha256,
+        source.path,
+        1,
+        1,
+        source.text,
+        1.0,
+        ("semantic",),
+    )
+
+    class Retriever:
+        def search_vector(self, query: str, limit: int = 20) -> list[SearchHit]:
+            return [hit]
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls: list[tuple[list[dict[str, str]], int | None]] = []
+
+        def complete(self, messages, max_tokens=None, json_schema=None) -> GenerationResult:
+            self.calls.append((messages, max_tokens))
+            if len(self.calls) == 1:
+                return GenerationResult('{"summary":"cut', 10, 3, 1.0, 2.0)
+            return GenerationResult(
+                '{"summary":"Migration","claims":[{"text":"UUID migration","evidence_ids":["c1"]}],"unresolved":[]}',
+                6,
+                5,
+                1.0,
+                2.0,
+            )
+
+    client = Client()
+    systems = ControlledSystems(
+        store,
+        Retriever(),
+        controller=object(),
+        client=client,
+        count_tokens=lambda text: len(text.split()),
+        vram_mib=lambda: 123,
+        run_group_id="g1",
+        model_sha256="b" * 64,
+        config_sha256="c" * 64,
+    )
+
+    run = systems.vector(proof_case())
+
+    assert run.answer == "Migration"
+    assert len(client.calls) == 2
+    assert [max_tokens for _messages, max_tokens in client.calls] == [1536, 1536]
+    assert "compact" in client.calls[1][0][0]["content"].lower()
+    assert run.cumulative_prompt_tokens == 16
+    assert run.completion_tokens == 8
+    assert len(run.raw_outputs) == 2
+
+
 def test_proof_system_record_contains_exact_citations_and_usage(
     tmp_path: Path,
 ) -> None:
