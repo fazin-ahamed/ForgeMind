@@ -1,6 +1,6 @@
 # ForgeMind
 
-ForgeMind is a local, evidence-constrained investigation runtime for reasoning over software archives. It combines hybrid retrieval, bounded evidence packs, a persistent reasoning ledger, exact-source verification, and a local web interface.
+ForgeMind is a local, evidence-constrained investigation runtime for reasoning over software archives. It combines hybrid retrieval, reversible TokenForge compression, bounded evidence packs, a persistent reasoning ledger, exact-source verification, and a local web interface.
 
 The current vertical runs Qwen3-4B through `llama.cpp`, answers from a SQLite archive, and removes claims whose cited source span or source hash cannot be verified.
 
@@ -28,3 +28,10 @@ uv run forgemind smoke --runs 10 --offline
 ```
 
 The synthetic archive under `examples/showcase-repository` provides a reproducible SQL, TypeScript, and log investigation without publishing private data.
+
+To reproduce the ignored large-archive profile:
+
+```powershell
+uv run python benchmarks/generate_archive.py --root data/private/forgebench-1m --target-words 1000000 --seed 42
+uv run forgemind profile-scale data/private/forgebench-1m --db artifacts/forgebench-1m.sqlite --max-active-tokens 16384
+```
