@@ -61,7 +61,12 @@ class ReasoningController:
 
     def investigate(
         self, question: str, mode: str = "reason"
-    ) -> tuple[AnswerDraft, ReasoningLedger, list[EvidencePack]]:
+    ) -> tuple[
+        AnswerDraft,
+        ReasoningLedger,
+        list[EvidencePack],
+        list[GenerationResult],
+    ]:
         if mode not in MODE_CYCLES:
             raise ValueError(f"unsupported mode: {mode}")
         ledger = ReasoningLedger(goal=question)
@@ -71,6 +76,7 @@ class ReasoningController:
         evidence_ids: list[str] = []
         seen_evidence: set[str] = set()
         broadened = False
+        generations: list[GenerationResult] = []
 
         for cycle in range(1, MODE_CYCLES[mode] + 1):
             queries.append(query)
@@ -116,6 +122,7 @@ class ReasoningController:
                 messages,
                 json_schema=ControllerDecision.model_json_schema(),
             )
+            generations.append(result)
             try:
                 decision = ControllerDecision.model_validate_json(_json_text(result.text))
             except ValueError:
@@ -129,6 +136,7 @@ class ReasoningController:
                     ],
                     json_schema=ControllerDecision.model_json_schema(),
                 )
+                generations.append(repair)
                 decision = ControllerDecision.model_validate_json(_json_text(repair.text))
 
             ledger = decision.ledger.model_copy(
@@ -141,7 +149,7 @@ class ReasoningController:
             )
             if decision.action == "answer":
                 assert decision.answer is not None
-                return decision.answer, ledger, packs
+                return decision.answer, ledger, packs, generations
             query = decision.query or ""
             if not query or query in queries:
                 break
@@ -150,6 +158,7 @@ class ReasoningController:
             AnswerDraft(summary="Insufficient evidence", claims=[], unresolved=STOPPED),
             ledger,
             packs,
+            generations,
         )
 
 
@@ -162,5 +171,7 @@ class InvestigationService:
 
     def ask(self, question: str, mode: str = "reason") -> VerifiedAnswer:
         with self._lock:
-            draft, ledger, packs = self.controller.investigate(question, mode)
+            draft, ledger, packs, _generations = self.controller.investigate(
+                question, mode
+            )
             return verify_answer(draft, ledger, packs, self.store)

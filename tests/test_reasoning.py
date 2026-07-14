@@ -87,13 +87,16 @@ def test_controller_stops_when_retrieval_adds_no_evidence() -> None:
         FakeRetriever(), client, lambda text: len(text.split())
     )
 
-    draft, ledger, packs = controller.investigate("why", mode="reason")
+    draft, ledger, packs, generations = controller.investigate(
+        "why", mode="reason"
+    )
 
     assert client.calls == 1
     assert client.seen_evidence_ids == ["c1"]
     assert ledger.retrieval_queries == ["why", "parseInt user id"]
     assert ledger.evidence_ids == ["c1"]
     assert len(packs) == 1
+    assert len(generations) == 1
     assert draft.unresolved == ["Investigation stopped without sufficient evidence."]
 
 
@@ -122,11 +125,24 @@ def test_controller_repairs_invalid_model_json_once() -> None:
         FakeRetriever(), client, lambda text: len(text.split())
     )
 
-    draft, ledger, _packs = controller.investigate("why")
+    draft, ledger, _packs, generations = controller.investigate("why")
 
     assert client.calls == 2
     assert draft.claims[0].evidence_ids == ["c1"]
     assert ledger.cycle == 1
+    assert len(generations) == 2
+
+
+def test_controller_returns_generation_usage_for_primary_and_repair_calls() -> None:
+    client = RepairingClient()
+    controller = ReasoningController(
+        FakeRetriever(), client, lambda text: len(text.split())
+    )
+
+    _draft, _ledger, _packs, generations = controller.investigate("why")
+
+    assert [item.prompt_tokens for item in generations] == [1, 1]
+    assert [item.completion_tokens for item in generations] == [1, 1]
 
 
 class EmptyRetriever:
@@ -146,10 +162,13 @@ def test_empty_evidence_broadens_once_then_abstains() -> None:
         lambda text: len(text.split()),
     )
 
-    draft, ledger, packs = controller.investigate("why did auth fail")
+    draft, ledger, packs, generations = controller.investigate(
+        "why did auth fail"
+    )
 
     assert len(retriever.queries) == 2
     assert retriever.queries[0] == "why did auth fail"
     assert ledger.retrieval_queries == retriever.queries
     assert len(packs) == 2
+    assert generations == []
     assert draft.claims == []

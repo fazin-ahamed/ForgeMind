@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from dataclasses import asdict
@@ -126,8 +127,9 @@ def _build_service(
 
 
 def _build_evaluation_systems(
-    config: RuntimeConfig, database: Path
+    config: RuntimeConfig, database: Path, run_group_id: str
 ) -> ControlledSystems:
+    from forgemind.benchmark import sha256_path
     from forgemind.eval import ControlledSystems
 
     store, retriever, client, controller = _build_stack(config, database)
@@ -138,6 +140,11 @@ def _build_evaluation_systems(
         client,
         client.count_tokens,
         used_vram_mib,
+        run_group_id,
+        sha256_path(config.model),
+        hashlib.sha256(
+            json.dumps(config.as_dict(), sort_keys=True).encode("utf-8")
+        ).hexdigest(),
     )
 
 
@@ -203,9 +210,13 @@ def main(argv: list[str] | None = None) -> int:
         names = parse_system_names(args.systems)
         cases = load_cases(Path(args.cases))
         with start_with_single_fallback(config) as server:
-            systems = _build_evaluation_systems(server.config, Path(args.db))
+            systems = _build_evaluation_systems(
+                server.config, Path(args.db), Path(args.freeze).name
+            )
             runners = {name: getattr(systems, name) for name in names}
-            runs = EvaluationRunner(runners).run(cases, names)
+            runs = EvaluationRunner(runners, systems.error_record).run(
+                cases, names
+            )
         freeze_results(Path(args.freeze), cases, runs, names)
         errors = sum(run.error is not None for run in runs)
         print(

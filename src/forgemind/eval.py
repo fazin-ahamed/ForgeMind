@@ -1,24 +1,27 @@
 from __future__ import annotations
 
+import hashlib
 import json
-import re
 import time
-from collections import defaultdict
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
-import numpy as np
-from pydantic import Field, model_validator
-
+from forgemind.benchmark import (
+    BenchmarkRun,
+    CitationSpan,
+    RuntimeCase,
+    load_runtime_cases,
+)
 from forgemind.context import assemble_evidence
 from forgemind.domain import (
     AnswerDraft,
+    EvidenceItem,
     EvidencePack,
     GenerationResult,
     ReasoningLedger,
     SearchHit,
-    StrictModel,
     VerifiedAnswer,
 )
 from forgemind.store import ForgeStore
@@ -37,7 +40,12 @@ class EvaluationRetriever(Protocol):
 class EvaluationController(Protocol):
     def investigate(
         self, question: str, mode: str = "reason"
-    ) -> tuple[AnswerDraft, ReasoningLedger, list[EvidencePack]]: ...
+    ) -> tuple[
+        AnswerDraft,
+        ReasoningLedger,
+        list[EvidencePack],
+        list[GenerationResult],
+    ]: ...
 
 
 class EvaluationClient(Protocol):
@@ -49,120 +57,25 @@ class EvaluationClient(Protocol):
     ) -> GenerationResult: ...
 
 
-class GoldFact(StrictModel):
-    id: str
-    any_of: list[list[str]]
-
-
-class EvalCase(StrictModel):
-    id: str
-    question: str
-    evidence_paths: list[str]
-    facts: list[GoldFact]
-    answer_absent: bool = False
-    category: str = "direct"
-    archive: str = "100k"
-
-
-class RunRecord(StrictModel):
-    system: str
-    case_id: str
-    claims: list[str]
-    cited_claims: list[bool]
-    retrieved_paths: list[str]
-    abstained: bool
-    active_tokens: int = Field(ge=0, le=16_384)
-    latency_ms: float = Field(ge=0)
-    peak_vram_mib: int = Field(ge=0)
-    error: str | None = None
-
-    @model_validator(mode="after")
-    def citations_align_with_claims(self) -> "RunRecord":
-        if len(self.cited_claims) != len(self.claims):
-            raise ValueError("cited claims must align with claims")
-        return self
-
-
-class CaseMetrics(StrictModel):
-    factual_precision: float
-    factual_recall: float
-    factual_f1: float
-    evidence_recall: float
-    citation_precision: float
-    correct_abstention: float
-
-
-def _normalize(text: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9_]+", text.lower()))
-
-
-def _matches(fact: GoldFact, claim: str) -> bool:
-    normalized = _normalize(claim)
-    return any(
-        all(_normalize(term) in normalized for term in group) for group in fact.any_of
-    )
-
-
-def score_case(case: EvalCase, run: RunRecord) -> CaseMetrics:
-    matched_facts = {
-        fact.id
-        for fact in case.facts
-        if any(_matches(fact, claim) for claim in run.claims)
-    }
-    matched_claims = sum(
-        any(_matches(fact, claim) for fact in case.facts) for claim in run.claims
-    )
-    precision = matched_claims / len(run.claims) if run.claims else 0.0
-    recall = len(matched_facts) / len(case.facts) if case.facts else 0.0
-    factual_f1 = (
-        2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    )
-    gold_paths = set(case.evidence_paths)
-    evidence_recall = (
-        len(gold_paths & set(run.retrieved_paths)) / len(gold_paths)
-        if gold_paths
-        else 0.0
-    )
-    citation_precision = (
-        sum(run.cited_claims) / len(run.cited_claims)
-        if run.cited_claims
-        else float(not run.claims)
-    )
-    return CaseMetrics(
-        factual_precision=precision,
-        factual_recall=recall,
-        factual_f1=factual_f1,
-        evidence_recall=evidence_recall,
-        citation_precision=citation_precision,
-        correct_abstention=float(case.answer_absent and run.abstained),
-    )
-
-
-def write_run(path: Path, run: RunRecord) -> None:
+def write_run(path: Path, run: BenchmarkRun) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(run.model_dump_json() + "\n")
 
 
-def load_runs(path: Path) -> list[RunRecord]:
+def load_runs(path: Path) -> list[BenchmarkRun]:
     return [
-        RunRecord.model_validate_json(line)
+        BenchmarkRun.model_validate_json(line)
         for line in path.read_text(encoding="utf-8").splitlines()
         if line
     ]
 
 
-def load_cases(path: Path) -> list[EvalCase]:
-    cases = [
-        EvalCase.model_validate_json(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line
-    ]
+def load_cases(path: Path) -> list[RuntimeCase]:
+    cases = load_runtime_cases(path)
     ids = [case.id for case in cases]
     if len(ids) != len(set(ids)):
         raise ValueError("evaluation cases contain duplicate IDs")
-    if not cases:
-        raise ValueError("evaluation requires at least one case")
     return cases
 
 
@@ -178,52 +91,10 @@ def parse_system_names(text: str) -> list[str]:
     return names
 
 
-def _interval(
-    values: list[float], rng: np.random.Generator
-) -> tuple[float, float, float]:
-    array = np.asarray(values, dtype=float)
-    means = np.asarray(
-        [rng.choice(array, len(array), replace=True).mean() for _ in range(2_000)]
-    )
-    return (
-        float(array.mean()),
-        float(np.quantile(means, 0.025)),
-        float(np.quantile(means, 0.975)),
-    )
-
-
-def summarize(
-    cases: list[EvalCase], runs: list[RunRecord], seed: int = 20_260_714
-) -> dict[str, object]:
-    case_by_id = {case.id: case for case in cases}
-    grouped: dict[str, list[CaseMetrics]] = defaultdict(list)
-    for run in runs:
-        grouped[run.system].append(score_case(case_by_id[run.case_id], run))
-    rng = np.random.default_rng(seed)
-    summary: dict[str, object] = {}
-    for system, metrics in sorted(grouped.items()):
-        summary[system] = {
-            name: dict(
-                zip(
-                    ("mean", "ci_low", "ci_high"),
-                    _interval([getattr(metric, name) for metric in metrics], rng),
-                    strict=True,
-                )
-            )
-            for name in (
-                "factual_f1",
-                "evidence_recall",
-                "citation_precision",
-                "correct_abstention",
-            )
-        }
-    return summary
-
-
 def freeze_results(
     directory: Path,
-    cases: list[EvalCase],
-    runs: list[RunRecord],
+    cases: list[RuntimeCase],
+    runs: list[BenchmarkRun],
     systems: list[str],
 ) -> None:
     run_path = directory / "runs.jsonl"
@@ -238,42 +109,64 @@ def freeze_results(
     for run in runs:
         write_run(run_path, run)
     summary_path.write_text(
-        json.dumps(summarize(cases, runs), indent=2, sort_keys=True) + "\n",
+        json.dumps(
+            {
+                "cases": len(cases),
+                "systems": systems,
+                "runs": len(runs),
+                "errors": sum(run.error is not None for run in runs),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
 
 
 class EvaluationRunner:
     def __init__(
-        self, systems: dict[str, Callable[[EvalCase], RunRecord]]
+        self,
+        systems: dict[str, Callable[[RuntimeCase], BenchmarkRun]],
+        error_factory: Callable[[str, RuntimeCase, Exception], BenchmarkRun],
     ) -> None:
         self.systems = systems
+        self.error_factory = error_factory
 
-    def run(self, cases: list[EvalCase], order: list[str]) -> list[RunRecord]:
-        runs: list[RunRecord] = []
+    def run(
+        self, cases: list[RuntimeCase], order: list[str]
+    ) -> list[BenchmarkRun]:
+        runs: list[BenchmarkRun] = []
         for case in sorted(cases, key=lambda item: item.id):
             for name in order:
                 try:
                     run = self.systems[name](case)
                     if run.system != name or run.case_id != case.id:
                         raise ValueError("system returned a mismatched run record")
-                    runs.append(run)
                 except Exception as error:
-                    runs.append(
-                        RunRecord(
-                            system=name,
-                            case_id=case.id,
-                            claims=[],
-                            cited_claims=[],
-                            retrieved_paths=[],
-                            abstained=True,
-                            active_tokens=0,
-                            latency_ms=0,
-                            peak_vram_mib=0,
-                            error=str(error),
-                        )
-                    )
+                    run = self.error_factory(name, case, error)
+                runs.append(run)
         return runs
+
+
+def _citation(item: EvidenceItem) -> CitationSpan:
+    return CitationSpan(
+        source_id=item.source_id,
+        source_sha256=item.source_sha256,
+        path=item.path,
+        start_line=item.start_line,
+        end_line=item.end_line,
+    )
+
+
+def _unique_spans(items: list[EvidenceItem]) -> list[CitationSpan]:
+    unique: dict[tuple[str, int, int], CitationSpan] = {}
+    for item in items:
+        span = _citation(item)
+        unique.setdefault(
+            (span.source_sha256, span.start_line, span.end_line), span
+        )
+    return list(unique.values())
 
 
 class ControlledSystems:
@@ -285,6 +178,9 @@ class ControlledSystems:
         client: EvaluationClient,
         count_tokens: Callable[[str], int],
         vram_mib: Callable[[], int],
+        run_group_id: str,
+        model_sha256: str,
+        config_sha256: str,
     ) -> None:
         self.store = store
         self.retriever = retriever
@@ -292,34 +188,47 @@ class ControlledSystems:
         self.client = client
         self.count_tokens = count_tokens
         self.vram_mib = vram_mib
+        self.run_group_id = run_group_id
+        self.model_sha256 = model_sha256
+        self.config_sha256 = config_sha256
 
-    def vector(self, case: EvalCase) -> RunRecord:
+    def vector(self, case: RuntimeCase) -> BenchmarkRun:
         return self._one_shot(
             "vector", case, self.retriever.search_vector(case.question, 20)
         )
 
-    def raw(self, case: EvalCase) -> RunRecord:
+    def raw(self, case: RuntimeCase) -> BenchmarkRun:
         return self._one_shot("raw", case, self.store.active_hits())
 
-    def hybrid(self, case: EvalCase) -> RunRecord:
+    def hybrid(self, case: RuntimeCase) -> BenchmarkRun:
         return self._one_shot(
             "hybrid", case, self.retriever.search(case.question, 20)
         )
 
-    def forgemind(self, case: EvalCase) -> RunRecord:
+    def forgemind(self, case: RuntimeCase) -> BenchmarkRun:
+        started_at = datetime.now(timezone.utc).isoformat()
         started = time.perf_counter()
         vram_before = self.vram_mib()
-        draft, ledger, packs = self.controller.investigate(
+        draft, ledger, packs, generations = self.controller.investigate(
             case.question, "investigate"
         )
         answer = verify_answer(draft, ledger, packs, self.store)
         return self._record(
-            "forgemind", case, answer, packs, started, vram_before
+            "forgemind",
+            case,
+            draft,
+            answer,
+            packs,
+            generations,
+            started_at,
+            started,
+            vram_before,
         )
 
     def _one_shot(
-        self, system: str, case: EvalCase, hits: list[SearchHit]
-    ) -> RunRecord:
+        self, system: str, case: RuntimeCase, hits: list[SearchHit]
+    ) -> BenchmarkRun:
+        started_at = datetime.now(timezone.utc).isoformat()
         started = time.perf_counter()
         vram_before = self.vram_mib()
         pack = assemble_evidence(case.question, hits, self.count_tokens)
@@ -332,7 +241,10 @@ class ControlledSystems:
                 {
                     "role": "user",
                     "content": json.dumps(
-                        {"question": case.question, "evidence": pack.model_payload()},
+                        {
+                            "question": case.question,
+                            "evidence": pack.model_payload(),
+                        },
                         ensure_ascii=False,
                     ),
                 },
@@ -347,29 +259,104 @@ class ControlledSystems:
             evidence_ids=[item.id for item in pack.items],
         )
         answer = verify_answer(draft, ledger, [pack], self.store)
-        return self._record(system, case, answer, [pack], started, vram_before)
+        return self._record(
+            system,
+            case,
+            draft,
+            answer,
+            [pack],
+            [result],
+            started_at,
+            started,
+            vram_before,
+        )
 
     def _record(
         self,
         system: str,
-        case: EvalCase,
+        case: RuntimeCase,
+        draft: AnswerDraft,
         answer: VerifiedAnswer,
         packs: list[EvidencePack],
+        generations: list[GenerationResult],
+        started_at: str,
         started: float,
         vram_before: int,
-    ) -> RunRecord:
-        paths = list(
-            dict.fromkeys(item.path for pack in packs for item in pack.items)
+        prompt_limit: int | None = None,
+    ) -> BenchmarkRun:
+        valid_ids = {item.id for pack in packs for item in pack.items}
+        attempted_ids = {
+            item for claim in draft.claims for item in claim.evidence_ids
+        }
+        prompt_tokens = max(
+            (item.prompt_tokens for item in generations), default=0
         )
-        return RunRecord(
+        limit = prompt_limit if prompt_limit is not None else case.input_budget
+        if prompt_tokens > limit:
+            raise ValueError(
+                f"prompt used {prompt_tokens} tokens; limit is {limit}"
+            )
+        run_id = hashlib.sha256(
+            f"{self.run_group_id}\0{case.id}\0{system}".encode("utf-8")
+        ).hexdigest()
+        return BenchmarkRun(
+            run_id=run_id,
+            run_group_id=self.run_group_id,
             system=system,
             case_id=case.id,
-            claims=[claim.text for claim in answer.claims],
-            cited_claims=[True for _claim in answer.claims],
-            retrieved_paths=paths,
+            answer=None if answer.status == "abstained" else answer.summary,
+            raw_outputs=[item.text for item in generations],
+            citations=_unique_spans(answer.evidence),
+            retrieved=_unique_spans(
+                [item for pack in packs for item in pack.items]
+            )[:20],
+            retrieved_by_cycle=[_unique_spans(pack.items) for pack in packs],
             abstained=answer.status == "abstained",
-            active_tokens=max((pack.active_tokens for pack in packs), default=0),
+            invalid_citations=len(attempted_ids - valid_ids),
+            prompt_tokens=prompt_tokens,
+            cumulative_prompt_tokens=sum(
+                item.prompt_tokens for item in generations
+            ),
+            completion_tokens=sum(
+                item.completion_tokens for item in generations
+            ),
+            retrieval_cycles=len(packs),
             latency_ms=(time.perf_counter() - started) * 1_000,
-            # ponytail: model memory is stable in the local server; sample endpoints unless transient peaks become material.
             peak_vram_mib=max(vram_before, self.vram_mib()),
+            model_sha256=self.model_sha256,
+            config_sha256=self.config_sha256,
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+    def error_record(
+        self, system: str, case: RuntimeCase, error: Exception
+    ) -> BenchmarkRun:
+        now = datetime.now(timezone.utc).isoformat()
+        run_id = hashlib.sha256(
+            f"{self.run_group_id}\0{case.id}\0{system}".encode("utf-8")
+        ).hexdigest()
+        return BenchmarkRun(
+            run_id=run_id,
+            run_group_id=self.run_group_id,
+            system=system,
+            case_id=case.id,
+            answer=None,
+            raw_outputs=[],
+            citations=[],
+            retrieved=[],
+            retrieved_by_cycle=[],
+            abstained=True,
+            invalid_citations=0,
+            prompt_tokens=0,
+            cumulative_prompt_tokens=0,
+            completion_tokens=0,
+            retrieval_cycles=0,
+            latency_ms=0,
+            peak_vram_mib=0,
+            model_sha256=self.model_sha256,
+            config_sha256=self.config_sha256,
+            started_at=now,
+            finished_at=now,
+            error=str(error),
         )

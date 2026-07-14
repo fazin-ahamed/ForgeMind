@@ -3,10 +3,10 @@ from dataclasses import replace
 from pathlib import Path
 
 import forgemind.cli as cli
+from forgemind.benchmark import BenchmarkRun, RuntimeCase
 from forgemind.cli import build_parser, main
 from forgemind.domain import GenerationResult, HardwareProfile
 from forgemind.domain import VerifiedAnswer
-from forgemind.eval import EvalCase, RunRecord
 
 
 def test_cli_parses_raw_question_and_context() -> None:
@@ -183,7 +183,16 @@ def test_evaluate_freezes_every_requested_system(
     monkeypatch.setenv("FORGEMIND_MODEL", str(model))
     cases = tmp_path / "cases.jsonl"
     cases.write_text(
-        EvalCase(id="c1", question="q", evidence_paths=[], facts=[]).model_dump_json()
+        RuntimeCase(
+            id="c1",
+            question="q",
+            capability="repository",
+            archive_band="32k",
+            archive_id="repository-32k",
+            archive_path="archives/repository-32k",
+            archive_sha256="a" * 64,
+            archived_tokens=32_000,
+        ).model_dump_json()
         + "\n",
         encoding="utf-8",
     )
@@ -199,22 +208,42 @@ def test_evaluate_freezes_every_requested_system(
             return None
 
     class Systems:
-        def raw(self, case: EvalCase) -> RunRecord:
-            return RunRecord(
+        def raw(self, case: RuntimeCase) -> BenchmarkRun:
+            return BenchmarkRun(
+                run_id="r1",
+                run_group_id="g1",
                 system="raw",
                 case_id=case.id,
-                claims=[],
-                cited_claims=[],
-                retrieved_paths=[],
+                answer=None,
+                raw_outputs=[],
+                citations=[],
+                retrieved=[],
+                retrieved_by_cycle=[],
                 abstained=True,
-                active_tokens=1,
+                invalid_citations=0,
+                prompt_tokens=1,
+                cumulative_prompt_tokens=1,
+                completion_tokens=0,
+                retrieval_cycles=1,
                 latency_ms=2,
                 peak_vram_mib=3,
+                model_sha256="b" * 64,
+                config_sha256="c" * 64,
+                started_at="2026-07-14T00:00:00+00:00",
+                finished_at="2026-07-14T00:00:01+00:00",
             )
+
+        def error_record(
+            self, system: str, case: RuntimeCase, error: Exception
+        ) -> BenchmarkRun:
+            raise AssertionError(f"unexpected error: {system} {case.id} {error}")
 
     monkeypatch.setattr(cli, "start_with_single_fallback", FakeServer)
     monkeypatch.setattr(
-        cli, "_build_evaluation_systems", lambda config, db: Systems(), raising=False
+        cli,
+        "_build_evaluation_systems",
+        lambda config, db, run_group: Systems(),
+        raising=False,
     )
     freeze = tmp_path / "freeze"
 

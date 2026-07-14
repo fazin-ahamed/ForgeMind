@@ -2,18 +2,14 @@ from pathlib import Path
 
 import pytest
 
+from forgemind.benchmark import BenchmarkRun, RuntimeCase
 from forgemind.eval import (
     ControlledSystems,
     EvaluationRunner,
-    EvalCase,
-    GoldFact,
-    RunRecord,
-    load_runs,
     freeze_results,
     load_cases,
+    load_runs,
     parse_system_names,
-    score_case,
-    summarize,
     write_run,
 )
 from forgemind.context import assemble_evidence
@@ -28,90 +24,53 @@ from forgemind.domain import (
 from forgemind.store import ForgeStore
 
 
-def test_scoring_rewards_gold_facts_evidence_and_valid_citations() -> None:
-    case = EvalCase(
-        id="auth-1",
-        question="Why did sessions fail?",
-        evidence_paths=["migration.sql", "session.py"],
-        facts=[GoldFact(id="f1", any_of=[["uuid", "parseint"]])],
-    )
-    run = RunRecord(
-        system="forgemind",
-        case_id="auth-1",
-        claims=["UUID values were passed through parseInt."],
-        cited_claims=[True],
-        retrieved_paths=["migration.sql", "session.py"],
-        abstained=False,
-        active_tokens=8_000,
-        latency_ms=20_000,
-        peak_vram_mib=7_500,
-    )
-
-    metrics = score_case(case, run)
-
-    assert metrics.factual_f1 == 1.0
-    assert metrics.evidence_recall == 1.0
-    assert metrics.citation_precision == 1.0
-
-
-def test_answer_absent_case_rewards_abstention() -> None:
-    case = EvalCase(
-        id="absent-1",
-        question="Unknown?",
-        evidence_paths=[],
-        facts=[],
-        answer_absent=True,
-    )
-    run = RunRecord(
-        system="forgemind",
-        case_id="absent-1",
-        claims=[],
-        cited_claims=[],
-        retrieved_paths=[],
-        abstained=True,
-        active_tokens=100,
-        latency_ms=10,
-        peak_vram_mib=100,
-    )
-
-    assert score_case(case, run).correct_abstention == 1.0
-
-
-def test_summary_bootstrap_is_seeded() -> None:
-    case = EvalCase(
+def proof_case() -> RuntimeCase:
+    return RuntimeCase(
         id="c1",
-        question="q",
-        evidence_paths=["a"],
-        facts=[GoldFact(id="f", any_of=[["uuid"]])],
-    )
-    run = RunRecord(
-        system="forgemind",
-        case_id="c1",
-        claims=["uuid"],
-        cited_claims=[True],
-        retrieved_paths=["a"],
-        abstained=False,
-        active_tokens=10,
-        latency_ms=20,
-        peak_vram_mib=30,
+        question="Why?",
+        capability="repository",
+        archive_band="32k",
+        archive_id="repository-32k",
+        archive_path="archives/repository-32k",
+        archive_sha256="a" * 64,
+        archived_tokens=32_000,
     )
 
-    assert summarize([case], [run]) == summarize([case], [run])
+
+def proof_run(
+    system: str = "raw",
+    case_id: str = "c1",
+    error: str | None = None,
+) -> BenchmarkRun:
+    return BenchmarkRun(
+        run_id=f"run-{system}",
+        run_group_id="g1",
+        system=system,
+        case_id=case_id,
+        answer=None,
+        raw_outputs=[],
+        citations=[],
+        retrieved=[],
+        retrieved_by_cycle=[],
+        abstained=True,
+        invalid_citations=0,
+        prompt_tokens=1,
+        cumulative_prompt_tokens=1,
+        completion_tokens=0,
+        retrieval_cycles=1,
+        latency_ms=2,
+        peak_vram_mib=3,
+        model_sha256="b" * 64,
+        config_sha256="c" * 64,
+        started_at="2026-07-14T00:00:00+00:00",
+        finished_at="2026-07-14T00:00:01+00:00",
+        error=error,
+    )
 
 
 def test_run_records_append_and_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "runs.jsonl"
-    first = RunRecord(
-        system="raw",
-        case_id="c1",
-        claims=[],
-        cited_claims=[],
-        retrieved_paths=[],
-        abstained=True,
-        active_tokens=1,
-        latency_ms=2,
-        peak_vram_mib=3,
-    )
+    first = proof_run()
     second = first.model_copy(update={"system": "forgemind"})
 
     write_run(path, first)
@@ -121,25 +80,21 @@ def test_run_records_append_and_round_trip(tmp_path: Path) -> None:
 
 
 def test_runner_keeps_failed_runs_and_fixed_order() -> None:
-    case = EvalCase(id="c1", question="q", evidence_paths=[], facts=[])
+    case = proof_case()
 
-    def good(item: EvalCase) -> RunRecord:
-        return RunRecord(
-            system="good",
-            case_id=item.id,
-            claims=[],
-            cited_claims=[],
-            retrieved_paths=[],
-            abstained=True,
-            active_tokens=1,
-            latency_ms=1,
-            peak_vram_mib=1,
-        )
+    def good(item: RuntimeCase) -> BenchmarkRun:
+        return proof_run("good", item.id)
 
-    def bad(item: EvalCase) -> RunRecord:
+    def bad(item: RuntimeCase) -> BenchmarkRun:
         raise RuntimeError("boom")
 
-    runs = EvaluationRunner({"good": good, "bad": bad}).run([case], ["bad", "good"])
+    runner = EvaluationRunner(
+        {"good": good, "bad": bad},
+        error_factory=lambda system, item, error: proof_run(
+            system, item.id, str(error)
+        ),
+    )
+    runs = runner.run([case], ["bad", "good"])
 
     assert [run.system for run in runs] == ["bad", "good"]
     assert runs[0].error == "boom"
@@ -188,22 +143,78 @@ def test_vector_adapter_uses_runtime_evidence_without_gold_manifest(
         client=Client(),
         count_tokens=lambda text: len(text.split()),
         vram_mib=lambda: 123,
+        run_group_id="g1",
+        model_sha256="b" * 64,
+        config_sha256="c" * 64,
     )
-    case = EvalCase(
-        id="c1",
-        question="Why?",
-        evidence_paths=["gold-secret"],
-        facts=[],
-    )
+    case = proof_case()
 
     run = systems.vector(case)
 
     assert run.system == "vector"
-    assert run.claims == ["UUID migration"]
-    assert run.retrieved_paths == ["session.py"]
-    assert run.cited_claims == [True]
+    assert run.answer == "Migration"
+    assert [item.path for item in run.retrieved] == ["session.py"]
+    assert [item.path for item in run.citations] == ["session.py"]
     assert systems.raw(case).system == "raw"
     assert systems.hybrid(case).system == "hybrid"
+
+
+def test_proof_system_record_contains_exact_citations_and_usage(
+    tmp_path: Path,
+) -> None:
+    store = ForgeStore(tmp_path / "forge.sqlite")
+    source = SourceRecord.from_text("session.py", "UUID migration", 1)
+    store.upsert_source(source)
+    hit = SearchHit(
+        "c1",
+        source.id,
+        source.sha256,
+        source.path,
+        1,
+        1,
+        source.text,
+        1.0,
+        ("semantic",),
+    )
+
+    class Retriever:
+        def search_vector(self, query: str, limit: int = 20) -> list[SearchHit]:
+            return [hit]
+
+        def search(self, query: str, limit: int = 20) -> list[SearchHit]:
+            return [hit]
+
+    class Client:
+        def complete(self, messages, max_tokens=None, json_schema=None) -> GenerationResult:
+            return GenerationResult(
+                '{"summary":"Migration","claims":[{"text":"UUID migration","evidence_ids":["c1"]}],"unresolved":[]}',
+                10,
+                5,
+                1.0,
+                2.0,
+            )
+
+    systems = ControlledSystems(
+        store,
+        Retriever(),
+        controller=object(),
+        client=Client(),
+        count_tokens=lambda text: len(text.split()),
+        vram_mib=lambda: 123,
+        run_group_id="g1",
+        model_sha256="b" * 64,
+        config_sha256="c" * 64,
+    )
+
+    run = systems.vector(proof_case())
+
+    assert run.answer == "Migration"
+    assert run.citations[0].path == "session.py"
+    assert run.citations[0].start_line == 1
+    assert run.prompt_tokens == 10
+    assert run.cumulative_prompt_tokens == 10
+    assert run.completion_tokens == 5
+    assert run.retrieval_cycles == 1
 
 
 def test_forgemind_adapter_records_verified_controller_result(tmp_path: Path) -> None:
@@ -233,6 +244,7 @@ def test_forgemind_adapter_records_verified_controller_result(tmp_path: Path) ->
                 ),
                 ReasoningLedger(goal=question, cycle=1, evidence_ids=["c1"]),
                 [pack],
+                [GenerationResult("{}", 11, 4, 1.0, 2.0)],
             )
 
     systems = ControlledSystems(
@@ -242,30 +254,21 @@ def test_forgemind_adapter_records_verified_controller_result(tmp_path: Path) ->
         client=object(),
         count_tokens=lambda text: len(text.split()),
         vram_mib=lambda: 123,
+        run_group_id="g1",
+        model_sha256="b" * 64,
+        config_sha256="c" * 64,
     )
 
-    run = systems.forgemind(
-        EvalCase(id="c1", question="Why?", evidence_paths=[], facts=[])
-    )
+    run = systems.forgemind(proof_case())
 
     assert run.system == "forgemind"
-    assert run.claims == ["UUID migration"]
-    assert run.active_tokens == pack.active_tokens
+    assert run.answer == "Migration"
+    assert run.prompt_tokens == 11
 
 
 def test_freeze_requires_one_run_per_case_and_system(tmp_path: Path) -> None:
-    case = EvalCase(id="c1", question="q", evidence_paths=[], facts=[])
-    run = RunRecord(
-        system="raw",
-        case_id="c1",
-        claims=[],
-        cited_claims=[],
-        retrieved_paths=[],
-        abstained=True,
-        active_tokens=1,
-        latency_ms=2,
-        peak_vram_mib=3,
-    )
+    case = proof_case()
+    run = proof_run()
     freeze = tmp_path / "frozen"
 
     freeze_results(freeze, [case], [run], ["raw"])
@@ -278,7 +281,7 @@ def test_freeze_requires_one_run_per_case_and_system(tmp_path: Path) -> None:
 
 def test_case_loader_rejects_duplicate_ids(tmp_path: Path) -> None:
     path = tmp_path / "cases.jsonl"
-    case = EvalCase(id="same", question="q", evidence_paths=[], facts=[])
+    case = proof_case().model_copy(update={"id": "same"})
     path.write_text(
         case.model_dump_json() + "\n" + case.model_dump_json() + "\n",
         encoding="utf-8",

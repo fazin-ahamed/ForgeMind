@@ -111,9 +111,10 @@ def test_investigation_service_always_verifies_controller_output(tmp_path: Path)
                     summary="Safe",
                     claims=[Claim(text="Fact is safe.", evidence_ids=["c1"])],
                 ),
-                ReasoningLedger(goal=question, cycle=1, evidence_ids=["c1"]),
-                [EvidencePack(query=question, items=[item], archived_tokens=1, active_tokens=1)],
-            )
+                    ReasoningLedger(goal=question, cycle=1, evidence_ids=["c1"]),
+                    [EvidencePack(query=question, items=[item], archived_tokens=1, active_tokens=1)],
+                    [],
+                )
 
     service = InvestigationService(FixedController(), store)
     with ThreadPoolExecutor(max_workers=1) as executor:
