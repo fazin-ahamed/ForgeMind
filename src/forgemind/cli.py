@@ -41,7 +41,36 @@ def build_parser() -> argparse.ArgumentParser:
     smoke = subparsers.add_parser("smoke")
     smoke.add_argument("--runs", type=int, default=10)
     smoke.add_argument("--offline", action="store_true")
+    profile = subparsers.add_parser("profile-scale")
+    profile.add_argument("root")
+    profile.add_argument("--db", required=True)
+    profile.add_argument("--max-active-tokens", type=int, default=16_384)
     return parser
+
+
+def profile_scale(root: Path, db: Path, max_active_tokens: int) -> dict[str, object]:
+    import time
+
+    if not 0 <= max_active_tokens <= 16_384:
+        raise ValueError("max active tokens exceeds ForgeMind hard limit")
+
+    from forgemind.ingest import ingest_project
+    from forgemind.retrieval import Embedder
+    from forgemind.store import ForgeStore
+
+    embedder = Embedder()
+    store = ForgeStore(db)
+    store.enable_vectors(embedder.dimensions)
+    started = time.perf_counter()
+    counts = ingest_project(root, store, embedder)
+    elapsed = time.perf_counter() - started
+    return {
+        "sources": counts["sources"],
+        "chunks": counts["chunks"],
+        "events": counts["events"],
+        "ingest_seconds": elapsed,
+        "max_active_tokens": max_active_tokens,
+    }
 
 
 def _build_service(config: RuntimeConfig, database: Path):
@@ -65,6 +94,10 @@ def _build_service(config: RuntimeConfig, database: Path):
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "profile-scale":
+        result = profile_scale(Path(args.root), Path(args.db), args.max_active_tokens)
+        print(json.dumps(result, indent=2))
+        return 0
     if args.command == "smoke":
         if not args.offline:
             raise ValueError("only the deterministic offline smoke is available")
