@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import re
+import unicodedata
 from collections import Counter
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
+import numpy as np
 from pydantic import Field, model_validator
 
 from forgemind.domain import StrictModel
@@ -166,3 +169,306 @@ def validate_bundle(
     )
     if counts != expected:
         raise ValueError(f"benchmark matrix mismatch: {dict(counts)}")
+
+
+class CaseMetrics(StrictModel):
+    answer_f1: float
+    fact_recall: float
+    citation_precision: float
+    citation_recall: float
+    citation_validity: float
+    retrieval_recall20: float
+    correct_abstention: float
+    unsupported_answer: float
+
+
+def _normalized(text: str, case_sensitive: bool = False) -> str:
+    value = unicodedata.normalize("NFKC", text)
+    if not case_sensitive:
+        value = value.casefold()
+    return " ".join(re.findall(r"[\w./:-]+", value, flags=re.UNICODE))
+
+
+def _token_f1(prediction: str, reference: str) -> float:
+    predicted = _normalized(prediction).split()
+    expected = _normalized(reference).split()
+    if not predicted or not expected:
+        return float(predicted == expected)
+    overlap = sum((Counter(predicted) & Counter(expected)).values())
+    if not overlap:
+        return 0.0
+    precision = overlap / len(predicted)
+    recall = overlap / len(expected)
+    return 2 * precision * recall / (precision + recall)
+
+
+def _answer_f1(answer: AnswerSpec, prediction: str | list[str] | None) -> float:
+    if prediction is None:
+        return 0.0
+    if answer.kind == "set":
+        if isinstance(prediction, str):
+            prediction = [
+                item.strip()
+                for item in re.split(r"[,;\n]+", prediction)
+                if item.strip()
+            ]
+        expected = {
+            _normalized(item, answer.case_sensitive) for item in answer.accepted
+        }
+        actual = {
+            _normalized(item, answer.case_sensitive) for item in prediction
+        }
+        if not expected or not actual:
+            return float(expected == actual)
+        overlap = len(expected & actual)
+        if not overlap:
+            return 0.0
+        precision = overlap / len(actual)
+        recall = overlap / len(expected)
+        return 2 * precision * recall / (precision + recall)
+    if isinstance(prediction, list):
+        return 0.0
+    if answer.kind == "exact":
+        return float(
+            _normalized(prediction, answer.case_sensitive)
+            in {
+                _normalized(item, answer.case_sensitive)
+                for item in answer.accepted
+            }
+        )
+    return max(_token_f1(prediction, reference) for reference in answer.accepted)
+
+
+def _lines(spans: list[CitationSpan]) -> set[tuple[str, int]]:
+    return {
+        (span.source_sha256, line)
+        for span in spans
+        for line in range(span.start_line, span.end_line + 1)
+    }
+
+
+def score_case(gold: GoldCase, run: BenchmarkRun) -> CaseMetrics:
+    answer_f1 = (
+        float(run.abstained)
+        if gold.answer_absent
+        else _answer_f1(gold.answer, run.answer)
+        if gold.answer is not None
+        else 0.0
+    )
+    cited = _lines(run.citations)
+    expected = _lines(gold.evidence)
+    citation_precision = (
+        len(cited & expected) / len(cited) if cited else float(not expected)
+    )
+    citation_recall = (
+        len(cited & expected) / len(expected) if expected else float(not cited)
+    )
+    retrieved = _lines(run.retrieved[:20])
+    retrieval_recall = (
+        len(retrieved & expected) / len(expected) if expected else 1.0
+    )
+    supported = bool(cited & expected) or gold.answer_absent
+    answer_text = (
+        " ".join(run.answer)
+        if isinstance(run.answer, list)
+        else run.answer or ""
+    )
+    fact_recall = (
+        sum(
+            _normalized(fact) in _normalized(answer_text)
+            for fact in gold.required_facts
+        )
+        / len(gold.required_facts)
+        if gold.required_facts
+        else 1.0
+    )
+    return CaseMetrics(
+        answer_f1=answer_f1,
+        fact_recall=fact_recall,
+        citation_precision=citation_precision,
+        citation_recall=citation_recall,
+        citation_validity=float(run.invalid_citations == 0),
+        retrieval_recall20=retrieval_recall,
+        correct_abstention=float(gold.answer_absent and run.abstained),
+        unsupported_answer=float(not run.abstained and not supported),
+    )
+
+
+def paired_interval(
+    forge: list[float], baseline: list[float], seed: int = 20_260_714
+) -> tuple[float, float]:
+    if len(forge) != len(baseline) or not forge:
+        raise ValueError("paired intervals require equal non-empty samples")
+    differences = np.asarray(forge, dtype=float) - np.asarray(
+        baseline, dtype=float
+    )
+    rng = np.random.default_rng(seed)
+    means = rng.choice(
+        differences, (10_000, len(differences)), replace=True
+    ).mean(axis=1)
+    return float(np.quantile(means, 0.025)), float(np.quantile(means, 0.975))
+
+
+def _abstention_f1(gold: list[GoldCase], runs: list[BenchmarkRun]) -> float:
+    by_id = {item.case_id: item for item in gold}
+    true_positive = sum(
+        by_id[run.case_id].answer_absent and run.abstained for run in runs
+    )
+    false_positive = sum(
+        not by_id[run.case_id].answer_absent and run.abstained for run in runs
+    )
+    false_negative = sum(
+        by_id[run.case_id].answer_absent and not run.abstained for run in runs
+    )
+    precision = (
+        true_positive / (true_positive + false_positive)
+        if true_positive + false_positive
+        else 0.0
+    )
+    recall = (
+        true_positive / (true_positive + false_negative)
+        if true_positive + false_negative
+        else 0.0
+    )
+    return (
+        2 * precision * recall / (precision + recall)
+        if precision + recall
+        else 0.0
+    )
+
+
+def summarize_benchmark(
+    runtime: list[RuntimeCase],
+    gold: list[GoldCase],
+    runs: list[BenchmarkRun],
+) -> dict[str, Any]:
+    validate_bundle(runtime, gold)
+    expected = {(case.id, system) for case in runtime for system in SYSTEMS}
+    actual = [
+        (run.case_id, run.system) for run in runs if run.system in SYSTEMS
+    ]
+    if set(actual) != expected or len(actual) != len(expected):
+        raise ValueError("benchmark has missing or duplicate primary runs")
+    gold_by_id = {case.case_id: case for case in gold}
+    run_by_pair = {
+        (run.case_id, run.system): run
+        for run in runs
+        if run.system in SYSTEMS
+    }
+    score_by_pair = {
+        pair: score_case(gold_by_id[pair[0]], run)
+        for pair, run in run_by_pair.items()
+    }
+    systems: dict[str, dict[str, float | int]] = {}
+    ordered_ids = [case.id for case in runtime]
+    for system in SYSTEMS:
+        system_runs = [run_by_pair[(case_id, system)] for case_id in ordered_ids]
+        metrics = [score_by_pair[(case_id, system)] for case_id in ordered_ids]
+        systems[system] = {
+            "answer_f1": float(np.mean([item.answer_f1 for item in metrics])),
+            "fact_recall": float(np.mean([item.fact_recall for item in metrics])),
+            "citation_precision": float(
+                np.mean([item.citation_precision for item in metrics])
+            ),
+            "citation_recall": float(
+                np.mean([item.citation_recall for item in metrics])
+            ),
+            "citation_validity": float(
+                np.mean([item.citation_validity for item in metrics])
+            ),
+            "retrieval_recall20": float(
+                np.mean([item.retrieval_recall20 for item in metrics])
+            ),
+            "abstention_f1": _abstention_f1(gold, system_runs),
+            "unsupported_answer_rate": float(
+                np.mean([item.unsupported_answer for item in metrics])
+            ),
+            "median_latency_ms": float(
+                np.median([item.latency_ms for item in system_runs])
+            ),
+            "p95_latency_ms": float(
+                np.quantile([item.latency_ms for item in system_runs], 0.95)
+            ),
+            "max_prompt_tokens": max(
+                item.prompt_tokens for item in system_runs
+            ),
+            "median_cumulative_prompt_tokens": float(
+                np.median(
+                    [item.cumulative_prompt_tokens for item in system_runs]
+                )
+            ),
+            "peak_vram_mib": max(item.peak_vram_mib for item in system_runs),
+            "errors": sum(item.error is not None for item in system_runs),
+            "malformed_outputs": sum(
+                item.error is not None
+                and "validation" in item.error.casefold()
+                for item in system_runs
+            ),
+        }
+    forge_values = [
+        score_by_pair[(case_id, "forgemind")].answer_f1
+        for case_id in ordered_ids
+    ]
+    intervals = {
+        baseline: paired_interval(
+            forge_values,
+            [
+                score_by_pair[(case_id, baseline)].answer_f1
+                for case_id in ordered_ids
+            ],
+        )
+        for baseline in SYSTEMS[:-1]
+    }
+    capabilities: dict[str, dict[str, float]] = {}
+    capability_wins = 0
+    for capability in dict.fromkeys(case.capability for case in runtime):
+        ids = [case.id for case in runtime if case.capability == capability]
+        row = {
+            system: float(
+                np.mean(
+                    [
+                        score_by_pair[(case_id, system)].answer_f1
+                        for case_id in ids
+                    ]
+                )
+            )
+            for system in SYSTEMS
+        }
+        capabilities[capability] = row
+        capability_wins += int(
+            row["forgemind"] > max(row[name] for name in SYSTEMS[:-1])
+        )
+    return {
+        "systems": systems,
+        "paired_intervals": intervals,
+        "capabilities": capabilities,
+        "capability_wins": capability_wins,
+        "complete": True,
+        "cases": len(runtime),
+        "runs": len(actual),
+    }
+
+
+def success_gates(summary: dict[str, Any]) -> dict[str, bool]:
+    systems = summary["systems"]
+    forge = systems["forgemind"]
+    best_baseline = max(
+        systems[name]["answer_f1"] for name in SYSTEMS[:-1]
+    )
+    intervals = summary["paired_intervals"]
+    best_baseline_abstention = max(
+        systems[name]["abstention_f1"] for name in SYSTEMS[:-1]
+    )
+    return {
+        "answer_gain": forge["answer_f1"] - best_baseline >= 0.05,
+        "positive_intervals": all(
+            intervals[name][0] > 0 for name in SYSTEMS[:-1]
+        ),
+        "capability_wins": summary["capability_wins"] >= 3,
+        "citation_precision": forge["citation_precision"] >= 0.90,
+        "citation_recall": forge["citation_recall"] >= 0.80,
+        "citation_validity": forge["citation_validity"] == 1.0,
+        "abstention": forge["abstention_f1"] >= best_baseline_abstention,
+        "context": forge["max_prompt_tokens"] <= 15_616,
+        "complete": bool(summary["complete"]),
+    }

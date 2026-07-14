@@ -1,5 +1,6 @@
 import pytest
 
+import forgemind.benchmark as benchmark
 from forgemind.benchmark import (
     AnswerSpec,
     BenchmarkRun,
@@ -86,3 +87,126 @@ def test_benchmark_run_retains_reproducibility_fields() -> None:
     )
 
     assert run.prompt_tokens == 15_616
+
+
+def benchmark_run(
+    answer: str | list[str] | None,
+    citations: list[CitationSpan],
+) -> BenchmarkRun:
+    return BenchmarkRun(
+        run_id="r1",
+        run_group_id="g1",
+        system="forgemind",
+        case_id="repo-32k-00",
+        answer=answer,
+        raw_outputs=[],
+        citations=citations,
+        retrieved=citations,
+        retrieved_by_cycle=[citations],
+        abstained=False,
+        invalid_citations=0,
+        prompt_tokens=100,
+        cumulative_prompt_tokens=100,
+        completion_tokens=10,
+        retrieval_cycles=1,
+        latency_ms=20,
+        peak_vram_mib=100,
+        model_sha256="c" * 64,
+        config_sha256="d" * 64,
+        started_at="2026-07-14T00:00:00+00:00",
+        finished_at="2026-07-14T00:00:01+00:00",
+    )
+
+
+def test_exact_answer_normalizes_unicode_and_case() -> None:
+    metrics = benchmark.score_case(
+        gold_case(), benchmark_run("VALIDATE_SESSION", gold_case().evidence)
+    )
+
+    assert metrics.answer_f1 == 1.0
+
+
+def test_whole_file_citation_loses_precision() -> None:
+    broad = gold_case().evidence[0].model_copy(
+        update={"start_line": 1, "end_line": 100}
+    )
+
+    metrics = benchmark.score_case(
+        gold_case(), benchmark_run("validate_session", [broad])
+    )
+
+    assert metrics.citation_recall == 1.0
+    assert metrics.citation_precision == pytest.approx(5 / 100)
+
+
+def test_absent_answer_requires_abstention() -> None:
+    gold = gold_case().model_copy(
+        update={"answer": None, "answer_absent": True, "evidence": []}
+    )
+    run = benchmark_run(None, []).model_copy(update={"abstained": True})
+
+    metrics = benchmark.score_case(gold, run)
+
+    assert metrics.answer_f1 == 1.0
+    assert metrics.correct_abstention == 1.0
+
+
+def test_set_answer_parses_concise_text_and_fact_recall() -> None:
+    gold = gold_case().model_copy(
+        update={
+            "answer": AnswerSpec(kind="set", accepted=["VALUE-1", "VALUE-2"]),
+            "required_facts": ["VALUE-1", "VALUE-2"],
+        }
+    )
+
+    metrics = benchmark.score_case(
+        gold,
+        benchmark_run("VALUE-1, VALUE-2", gold.evidence),
+    )
+
+    assert metrics.answer_f1 == 1.0
+    assert metrics.fact_recall == 1.0
+
+
+def test_summary_is_complete_and_paired() -> None:
+    case = runtime_case()
+    gold = gold_case()
+    runs = [
+        benchmark_run("wrong", []).model_copy(
+            update={"run_id": f"r-{system}", "system": system}
+        )
+        for system in benchmark.SYSTEMS[:-1]
+    ] + [benchmark_run("validate_session", gold.evidence)]
+
+    summary = benchmark.summarize_benchmark([case], [gold], runs)
+
+    assert summary["complete"] is True
+    assert summary["systems"]["forgemind"]["answer_f1"] == 1.0
+    assert summary["paired_intervals"]["hybrid"] == (1.0, 1.0)
+
+
+def test_success_gates_require_five_points_and_positive_intervals() -> None:
+    summary = {
+        "systems": {
+            "raw": {"answer_f1": 0.60, "abstention_f1": 0.70},
+            "vector": {"answer_f1": 0.64, "abstention_f1": 0.75},
+            "hybrid": {"answer_f1": 0.65, "abstention_f1": 0.80},
+            "forgemind": {
+                "answer_f1": 0.71,
+                "citation_precision": 0.92,
+                "citation_recall": 0.84,
+                "citation_validity": 1.0,
+                "abstention_f1": 0.80,
+                "max_prompt_tokens": 15_000,
+            },
+        },
+        "paired_intervals": {
+            "raw": (0.05, 0.08),
+            "vector": (0.02, 0.06),
+            "hybrid": (0.01, 0.05),
+        },
+        "capability_wins": 3,
+        "complete": True,
+    }
+
+    assert all(benchmark.success_gates(summary).values())
