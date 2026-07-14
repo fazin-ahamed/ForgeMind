@@ -27,7 +27,7 @@ dev = [
   "httpx2>=2.6,<3",
   "mypy>=1.18,<2",
   "pip-audit>=2.9,<3",
-  "pytest>=8.4,<9",
+  "pytest>=9.0.3,<10",
   "ruff>=0.14,<1",
 ]
 eval = ["datasets>=4,<5"]
