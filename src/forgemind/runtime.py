@@ -8,8 +8,10 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import replace
 
+import httpx
+
 from forgemind.config import RuntimeConfig
-from forgemind.domain import HardwareProfile
+from forgemind.domain import GenerationResult, HardwareProfile
 
 
 class _MemoryStatus(ctypes.Structure):
@@ -31,6 +33,20 @@ def parse_nvidia_smi(text: str, ram_mib: int) -> HardwareProfile:
     if len(fields) != 3:
         raise RuntimeError(f"unexpected nvidia-smi output: {text!r}")
     return HardwareProfile(fields[0], int(fields[1].removesuffix(" MiB")), fields[2], ram_mib)
+
+
+def parse_chat_response(payload: dict[str, object]) -> GenerationResult:
+    choices = payload["choices"]
+    usage = payload.get("usage", {})
+    timings = payload.get("timings", {})
+    message = choices[0]["message"]
+    return GenerationResult(
+        text=str(message["content"]),
+        prompt_tokens=int(usage.get("prompt_tokens", 0)),
+        completion_tokens=int(usage.get("completion_tokens", 0)),
+        prompt_ms=float(timings.get("prompt_ms", 0.0)),
+        generation_ms=float(timings.get("predicted_ms", 0.0)),
+    )
 
 
 def physical_ram_mib() -> int:
@@ -151,3 +167,26 @@ def start_with_single_fallback(
     second = factory(fallback)
     second.start()
     return second
+
+
+class LlamaClient:
+    def __init__(self, config: RuntimeConfig) -> None:
+        self.config = config
+
+    def complete(
+        self,
+        messages: list[dict[str, str]],
+        max_tokens: int | None = None,
+    ) -> GenerationResult:
+        with httpx.Client(timeout=self.config.timeout_seconds) as client:
+            response = client.post(
+                f"{self.config.server_url}/v1/chat/completions",
+                json={
+                    "messages": messages,
+                    "temperature": 0,
+                    "max_tokens": max_tokens or self.config.max_output_tokens,
+                    "cache_prompt": True,
+                },
+            )
+            response.raise_for_status()
+            return parse_chat_response(response.json())

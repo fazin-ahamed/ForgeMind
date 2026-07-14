@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 from forgemind.config import RuntimeConfig
-from forgemind.runtime import LlamaServer, start_with_single_fallback
-from forgemind.runtime import parse_nvidia_smi, physical_ram_mib, probe_hardware
+from forgemind.runtime import LlamaClient, LlamaServer, start_with_single_fallback
+from forgemind.runtime import parse_chat_response, parse_nvidia_smi, physical_ram_mib, probe_hardware
 
 
 def test_parse_nvidia_smi_returns_typed_hardware_profile() -> None:
@@ -89,3 +89,57 @@ def test_non_allocation_failure_is_not_hidden_by_retry(tmp_path: Path) -> None:
             RuntimeConfig(tmp_path / "server", tmp_path / "model"), factory=FakeServer
         )
     assert attempts == 1
+
+
+def test_parse_chat_response_preserves_usage_and_timings() -> None:
+    result = parse_chat_response(
+        {
+            "choices": [{"message": {"content": "Root cause."}}],
+            "usage": {"prompt_tokens": 120, "completion_tokens": 8},
+            "timings": {"prompt_ms": 240.0, "predicted_ms": 160.0},
+        }
+    )
+
+    assert result.text == "Root cause."
+    assert result.prompt_tokens == 120
+    assert result.completion_tokens == 8
+    assert result.total_ms == 400.0
+
+
+def test_llama_client_posts_deterministic_chat_request(tmp_path: Path, monkeypatch) -> None:
+    sent: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            sent["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, url: str, json: dict[str, object]) -> FakeResponse:
+            sent.update({"url": url, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr("forgemind.runtime.httpx.Client", FakeClient)
+    config = RuntimeConfig(tmp_path / "server", tmp_path / "model")
+
+    result = LlamaClient(config).complete([{"role": "user", "content": "hi"}], max_tokens=7)
+
+    assert result.text == "ok"
+    assert sent["url"] == "http://127.0.0.1:8080/v1/chat/completions"
+    assert sent["json"] == {
+        "messages": [{"role": "user", "content": "hi"}],
+        "temperature": 0,
+        "max_tokens": 7,
+        "cache_prompt": True,
+    }

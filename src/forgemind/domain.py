@@ -8,3 +8,15 @@ class HardwareProfile:
     driver_version: str
     ram_mib: int
 
+
+@dataclass(frozen=True, slots=True)
+class GenerationResult:
+    text: str
+    prompt_tokens: int
+    completion_tokens: int
+    prompt_ms: float
+    generation_ms: float
+
+    @property
+    def total_ms(self) -> float:
+        return self.prompt_ms + self.generation_ms
