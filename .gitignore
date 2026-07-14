@@ -1,6 +1,7 @@
 # Private planning, research, reports, and visual-companion artifacts
 /.forgemind-private/
 /.superpowers/
+/.worktrees/
 /docs/superpowers/
 /planning/
 /research/
