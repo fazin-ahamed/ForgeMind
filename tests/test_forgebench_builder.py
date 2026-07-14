@@ -1,6 +1,8 @@
 import hashlib
 import io
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import benchmarks.build_forgebench as builder
@@ -97,6 +99,32 @@ def test_select_cell_is_seeded_and_bands_do_not_overlap(tmp_path: Path) -> None:
     )
 
 
+def test_repository_cell_uses_one_shared_repository_per_band(
+    tmp_path: Path,
+) -> None:
+    candidates = []
+    for group in range(4):
+        runtime, gold = build_ruler_case(tmp_path / f"repo-{group}", seed=group)
+        for question in range(2):
+            case_id = f"repo-{group}-question-{question}"
+            candidates.append(
+                (
+                    runtime.model_copy(
+                        update={"id": case_id, "capability": "repository"}
+                    ),
+                    gold.model_copy(update={"case_id": case_id}),
+                )
+            )
+
+    first = select_cell(candidates, "repository", "32k", 2, seed=5)
+    second = select_cell(candidates, "repository", "100k", 2, seed=5)
+
+    assert len({runtime.archive_path for runtime, _ in first}) == 1
+    assert {runtime.archive_path for runtime, _ in first}.isdisjoint(
+        runtime.archive_path for runtime, _ in second
+    )
+
+
 def test_write_jsonl_keeps_one_record_per_line(tmp_path: Path) -> None:
     runtime, _ = build_ruler_case(tmp_path / "case", seed=9)
     output = tmp_path / "runtime.jsonl"
@@ -106,6 +134,16 @@ def test_write_jsonl_keeps_one_record_per_line(tmp_path: Path) -> None:
     lines = output.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     assert '"id":"ruler-9"' in lines[0]
+
+
+def test_documented_builder_module_runs() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "benchmarks.build_forgebench", "--help"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_llama_token_count_uses_tokenize_endpoint(monkeypatch) -> None:
@@ -133,9 +171,10 @@ def test_build_suite_creates_sixteen_shared_archives(
     candidates = []
     for capability in builder.CAPABILITIES:
         for index in range(8):
+            source_index = index // 2 if capability == "repository" else index
             runtime, gold = build_ruler_case(
-                tmp_path / "candidates" / capability / str(index),
-                seed=100 * builder.CAPABILITIES.index(capability) + index,
+                tmp_path / "candidates" / capability / str(source_index),
+                seed=100 * builder.CAPABILITIES.index(capability) + source_index,
             )
             case_id = f"{capability}-{index}"
             candidates.append(

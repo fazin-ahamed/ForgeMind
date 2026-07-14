@@ -12,6 +12,10 @@ from forgemind.benchmark import (
     AnswerSpec,
     CitationSpan,
     GoldCase,
+    LONGMEMEVAL_CODE_REVISION,
+    LONGMEMEVAL_DATA_REVISION,
+    REPOQA_CODE_REVISION,
+    REPOQA_DATA_VERSION,
     RuntimeCase,
     sha256_path,
 )
@@ -20,10 +24,6 @@ from forgemind.domain import SourceRecord
 
 LONG_BENCH_REVISION = "2b48e49"
 SWEBENCH_REVISION = "fd80552"
-REPOQA_CODE_REVISION = "ae876deb1365dbf5a15b0533723c8ed123eee586"
-REPOQA_DATA_VERSION = "2024-06-23"
-LONGMEMEVAL_CODE_REVISION = "9e0b455f4ef0e2ab8f2e582289761153549043fc"
-LONGMEMEVAL_DATA_REVISION = "98d7416c24c778c2fee6e6f3006e7a073259d48f"
 REPOQA_URL = (
     "https://github.com/evalplus/repoqa_release/releases/download/"
     f"{REPOQA_DATA_VERSION}/repoqa-{REPOQA_DATA_VERSION}.json.gz"
@@ -101,15 +101,19 @@ def repoqa_candidates(
         for repository in sorted(repositories, key=lambda item: item["repo"]):
             contents = dict(repository["content"])
             needles = sorted(repository.get("needles", []), key=lambda item: item["name"])
+            repository_id = _slug(
+                f"repoqa-{language}-{repository['repo']}-{repository['commit_sha']}"
+            )
+            case_root = root / repository_id
+            for relative, text in sorted(contents.items()):
+                path = case_root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(str(text), encoding="utf-8")
+            archive_sha256 = sha256_path(case_root)
             for needle in needles:
                 case_id = _slug(
                     f"repoqa-{language}-{repository['repo']}-{needle['name']}"
                 )
-                case_root = root / case_id
-                for relative, text in sorted(contents.items()):
-                    path = case_root / relative
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(str(text), encoding="utf-8")
                 target_path = str(needle["path"])
                 target_text = str(contents[target_path])
                 target = SourceRecord.from_text(target_path, target_text, 0)
@@ -125,7 +129,7 @@ def repoqa_candidates(
                     archive_band="32k",
                     archive_id=f"candidate-{case_id}",
                     archive_path=str(case_root),
-                    archive_sha256=sha256_path(case_root),
+                    archive_sha256=archive_sha256,
                     archived_tokens=32_000,
                 )
                 runtime.append(runtime_case)
@@ -169,9 +173,17 @@ def longmemeval_candidates(
         sessions = list(row["haystack_sessions"])
         session_ids = list(row["haystack_session_ids"])
         dates = list(row["haystack_dates"])
+        evidence_sessions = {
+            index
+            for index, raw_session in enumerate(sessions)
+            if any(bool(turn.get("has_answer")) for turn in raw_session)
+        }
+        retained_sessions = evidence_sessions or {max(0, len(sessions) - 1)}
         for index, (session_id, date, raw_session) in enumerate(
             zip(session_ids, dates, sessions, strict=True)
         ):
+            if index not in retained_sessions:
+                continue
             path = case_root / f"session-{index:04d}.md"
             path.parent.mkdir(parents=True, exist_ok=True)
             turns = list(raw_session)

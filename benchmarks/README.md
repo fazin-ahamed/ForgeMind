@@ -33,7 +33,7 @@ uv run python benchmarks/import_external.py longmemeval --output .forgemind-priv
 Start the local llama.cpp server, then construct the 32-case development matrix using its exact `/tokenize` endpoint:
 
 ```powershell
-uv run python benchmarks/build_forgebench.py --split dev --output .forgemind-private/benchmarks/dev --repoqa .forgemind-private/benchmarks/sources/repoqa.json --longmemeval .forgemind-private/benchmarks/sources/longmemeval.json --tokenizer-url http://127.0.0.1:8080 --seed 20260714
+uv run python -m benchmarks.build_forgebench --split dev --output .forgemind-private/benchmarks/dev --repoqa .forgemind-private/benchmarks/sources/repoqa.json --longmemeval .forgemind-private/benchmarks/sources/longmemeval.json --tokenizer-url http://127.0.0.1:8080 --seed 20260714
 ```
 
 Validate and freeze the runtime/gold boundary, prepare one resumable database per shared archive, evaluate all four systems, and generate the deterministic report:

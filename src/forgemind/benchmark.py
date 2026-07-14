@@ -19,6 +19,11 @@ Capability = Literal["repository", "memory", "effective-context", "adversarial"]
 ArchiveBand = Literal["32k", "100k", "250k", "1m"]
 AnswerKind = Literal["exact", "set", "text"]
 SYSTEMS = ("raw", "vector", "hybrid", "forgemind")
+REPOQA_CODE_REVISION = "ae876deb1365dbf5a15b0533723c8ed123eee586"
+REPOQA_DATA_VERSION = "2024-06-23"
+LONGMEMEVAL_CODE_REVISION = "9e0b455f4ef0e2ab8f2e582289761153549043fc"
+LONGMEMEVAL_DATA_REVISION = "98d7416c24c778c2fee6e6f3006e7a073259d48f"
+RULER_REVISION = "e8bbff677ca2c239640dc90f93310dcf32408c93"
 BAND_LIMITS = {
     "32k": (28_000, 40_000),
     "100k": (90_000, 120_000),

@@ -46,20 +46,30 @@ def test_repoqa_candidate_uses_description_name_and_exact_lines(
                         "description": (
                             "Checks whether a supplied session value is usable."
                         ),
-                    }
+                    },
+                    {
+                        "name": "helper",
+                        "path": "src/auth.py",
+                        "start_line": 0,
+                        "end_line": 2,
+                        "description": "Performs the supporting operation.",
+                    },
                 ],
             }
         ]
     }
 
     runtime, gold = repoqa_candidates(source, tmp_path)
+    validate = next(
+        item for item in gold if item.answer and item.answer.accepted == ["validate_session"]
+    )
 
     assert runtime[0].question.startswith("Which function")
-    assert gold[0].answer is not None
-    assert gold[0].answer.accepted == ["validate_session"]
-    assert gold[0].answer.case_sensitive is True
-    assert gold[0].evidence[0].start_line == 3
-    assert gold[0].evidence[0].end_line == 4
+    assert validate.answer is not None
+    assert validate.answer.case_sensitive is True
+    assert validate.evidence[0].start_line == 3
+    assert validate.evidence[0].end_line == 4
+    assert runtime[0].archive_path == runtime[1].archive_path
 
 
 def test_longmemeval_candidate_preserves_dates_and_answer_turns(
@@ -137,3 +147,31 @@ def test_longmemeval_download_applies_stable_limit(
     assert json.loads(output.read_text(encoding="utf-8")) == [
         {"question_id": "q1"}
     ]
+
+
+def test_longmemeval_candidate_keeps_only_evidence_sessions(tmp_path: Path) -> None:
+    source = [
+        {
+            "question_id": "q1",
+            "question": "Where did I move?",
+            "answer": "Dubai",
+            "question_date": "2026/07/01",
+            "haystack_session_ids": ["noise", "answer"],
+            "haystack_dates": ["2026/05/01", "2026/06/01"],
+            "haystack_sessions": [
+                [{"role": "user", "content": "Unrelated note."}],
+                [
+                    {
+                        "role": "user",
+                        "content": "I moved to Dubai.",
+                        "has_answer": True,
+                    }
+                ],
+            ],
+        }
+    ]
+
+    runtime, _gold = longmemeval_candidates(source, tmp_path)
+    files = sorted(Path(runtime[0].archive_path).glob("*.md"))
+
+    assert [path.name for path in files] == ["session-0001.md"]

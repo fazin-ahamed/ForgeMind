@@ -19,6 +19,7 @@ from forgemind.benchmark import (
     Capability,
     CitationSpan,
     GoldCase,
+    RULER_REVISION,
     RuntimeCase,
     sha256_path,
     validate_bundle,
@@ -26,7 +27,6 @@ from forgemind.benchmark import (
 from forgemind.domain import SourceRecord, StrictModel
 
 
-RULER_REVISION = "e8bbff677ca2c239640dc90f93310dcf32408c93"
 CAPABILITIES: tuple[Capability, ...] = (
     "repository",
     "memory",
@@ -271,9 +271,42 @@ def select_cell(
         (pair for pair in candidates if pair[0].capability == capability),
         key=lambda pair: pair[0].id,
     )
-    rng = random.Random(f"{seed}:{capability}")
-    rng.shuffle(eligible)
     band_index = list(BAND_LIMITS).index(band)
+    if capability == "repository":
+        grouped: dict[str, list[tuple[RuntimeCase, GoldCase]]] = {}
+        for pair in eligible:
+            grouped.setdefault(pair[0].archive_path, []).append(pair)
+        repositories = sorted(
+            (items for items in grouped.values() if len(items) >= count),
+            key=lambda items: (
+                sum(
+                    path.stat().st_size
+                    for path in Path(items[0][0].archive_path).rglob("*")
+                    if path.is_file()
+                ),
+                items[0][0].archive_path,
+            ),
+        )
+        if len(repositories) <= band_index:
+            raise ValueError(f"not enough repository groups for {band}")
+        selected = sorted(repositories[band_index], key=lambda pair: pair[0].id)
+        rng = random.Random(f"{seed}:{capability}:{band}")
+        rng.shuffle(selected)
+        return selected[:count]
+    if capability == "memory":
+        eligible.sort(
+            key=lambda pair: (
+                sum(
+                    path.stat().st_size
+                    for path in Path(pair[0].archive_path).rglob("*")
+                    if path.is_file()
+                ),
+                pair[0].id,
+            )
+        )
+    else:
+        rng = random.Random(f"{seed}:{capability}")
+        rng.shuffle(eligible)
     start = band_index * count
     selected = eligible[start : start + count]
     if len(selected) != count:
@@ -345,14 +378,18 @@ def build_suite(
             archive_root.mkdir(parents=True)
             cell_runtime: list[RuntimeCase] = []
             cell_gold: list[GoldCase] = []
+            prefixes: dict[tuple[str, str], str] = {}
             for runtime, gold in selected:
-                _copy_candidate(Path(runtime.archive_path), archive_root / runtime.id)
+                source_key = (runtime.archive_path, runtime.archive_sha256)
+                prefix = prefixes.setdefault(source_key, runtime.id)
+                if prefix == runtime.id:
+                    _copy_candidate(Path(runtime.archive_path), archive_root / prefix)
                 cell_runtime.append(runtime)
                 cell_gold.append(
                     gold.model_copy(
                         update={
                             "evidence": [
-                                rebase_span(span, runtime.id)
+                                rebase_span(span, prefix)
                                 for span in gold.evidence
                             ]
                         }

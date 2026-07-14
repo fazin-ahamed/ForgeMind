@@ -57,3 +57,10 @@ def test_public_docs_name_proof_commands_and_non_claims() -> None:
         assert command in benchmark
     assert "does not directly attend to one million tokens" in readme
     assert "derived" in benchmark
+
+
+def test_third_party_notices_cover_primary_forgebench_sources() -> None:
+    notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+
+    assert "RepoQA" in notices
+    assert "LongMemEval" in notices

@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -142,6 +145,39 @@ def test_benchmark_validation_freezes_exact_archive_hashes(tmp_path: Path) -> No
     assert payload["archives"] == 16
     assert payload["model_sha256"] == sha256_path(model)
     assert freeze.is_file()
+
+
+def test_installed_cli_validates_benchmark_outside_repository(tmp_path: Path) -> None:
+    runtime_path, gold_path, _runtime = _benchmark_matrix(tmp_path)
+    server = tmp_path / "server.exe"
+    model = tmp_path / "model.gguf"
+    server.write_bytes(b"server")
+    model.write_bytes(b"model")
+    environment = os.environ | {
+        "FORGEMIND_LLAMA_SERVER": str(server),
+        "FORGEMIND_MODEL": str(model),
+    }
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "forgemind",
+            "benchmark-validate",
+            str(runtime_path),
+            str(gold_path),
+            "--expected-per-cell",
+            "1",
+            "--freeze",
+            str(tmp_path / "subprocess-manifest.json"),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_benchmark_prepare_indexes_shared_archive_once_and_resumes(

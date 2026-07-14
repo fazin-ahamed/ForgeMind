@@ -150,14 +150,12 @@ def validate_benchmark(
     freeze: Path,
     model: Path,
 ) -> dict[str, object]:
-    from benchmarks.build_forgebench import RULER_REVISION
-    from benchmarks.import_external import (
+    from forgemind.benchmark import (
         LONGMEMEVAL_CODE_REVISION,
         LONGMEMEVAL_DATA_REVISION,
         REPOQA_CODE_REVISION,
         REPOQA_DATA_VERSION,
-    )
-    from forgemind.benchmark import (
+        RULER_REVISION,
         load_gold_cases,
         load_runtime_cases,
         sha256_path,
