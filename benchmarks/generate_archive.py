@@ -12,6 +12,32 @@ TEMPLATES = (
     "2026-04-21 unrelated billing reconciliation completed request_id={request_id} source=/src/features/authentication/session/decoder.ts",
 )
 
+DISTRACTOR_TEMPLATES = (
+    "Routine audit event {event:09d} completed without changing authority.",
+    "Background worker {event:09d} retried an unrelated cache refresh.",
+    "Historical proposal {event:09d} was discussed but never approved.",
+    "Telemetry sample {event:09d} contains no evidence for the active query.",
+)
+
+
+def generate_distractors(
+    seed: int,
+    documents: int = 8,
+    lines_per_document: int = 128,
+) -> list[str]:
+    if documents < 1 or lines_per_document < 1:
+        raise ValueError("distractor dimensions must be positive")
+    randomizer = random.Random(seed)
+    return [
+        "\n".join(
+            randomizer.choice(DISTRACTOR_TEMPLATES).format(
+                event=randomizer.randrange(10**9)
+            )
+            for _ in range(lines_per_document)
+        )
+        for _ in range(documents)
+    ]
+
 
 def generate_archive(root: Path, target_words: int, seed: int) -> str:
     if target_words < 1:
