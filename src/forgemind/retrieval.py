@@ -60,6 +60,8 @@ class Retriever:
             hits.append(
                 SearchHit(
                     chunk_id,
+                    row["source_id"],
+                    row["source_sha256"],
                     row["path"],
                     row["start_line"],
                     row["end_line"],

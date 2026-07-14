@@ -63,6 +63,8 @@ class ProjectEvent:
 @dataclass(frozen=True, slots=True)
 class SearchHit:
     chunk_id: str
+    source_id: str
+    source_sha256: str
     path: str
     start_line: int
     end_line: int

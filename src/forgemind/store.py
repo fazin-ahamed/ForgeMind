@@ -171,6 +171,9 @@ class ForgeStore:
             return {}
         marks = ",".join("?" for _ in chunk_ids)
         rows = self.connection.execute(
-            f"SELECT * FROM chunks WHERE id IN ({marks})", chunk_ids
+            "SELECT chunks.*, sources.sha256 AS source_sha256 "
+            "FROM chunks JOIN sources ON sources.id = chunks.source_id "
+            f"WHERE chunks.id IN ({marks})",
+            chunk_ids,
         ).fetchall()
         return {str(row["id"]): row for row in rows}
