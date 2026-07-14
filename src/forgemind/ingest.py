@@ -4,10 +4,12 @@ import hashlib
 import re
 import subprocess
 from pathlib import Path
+from typing import Protocol
 
 from tree_sitter_language_pack import get_parser
 
 from forgemind.domain import ChunkRecord, ProjectEvent, SourceRecord
+from forgemind.store import ForgeStore
 
 
 EXCLUDED_PARTS = {
@@ -42,6 +44,10 @@ LANGUAGES = {
 FUNCTION_TYPES = {"function_definition", "function_declaration", "method_definition"}
 
 
+class EmbeddingEncoder(Protocol):
+    def encode(self, texts: list[str]) -> list[list[float]]: ...
+
+
 def is_likely_secret(path: str, text: str) -> bool:
     if Path(path).name.lower() in {".env", "credentials.json", "secrets.json"}:
         return True
@@ -52,7 +58,8 @@ def discover_text_sources(root: Path) -> list[SourceRecord]:
     resolved_root = root.resolve(strict=True)
     sources: list[SourceRecord] = []
     for candidate in sorted(resolved_root.rglob("*")):
-        if not candidate.is_file() or any(part in EXCLUDED_PARTS for part in candidate.parts):
+        relative_parts = candidate.relative_to(resolved_root).parts
+        if not candidate.is_file() or any(part in EXCLUDED_PARTS for part in relative_parts):
             continue
         resolved = candidate.resolve(strict=True)
         if resolved_root not in resolved.parents:
@@ -122,3 +129,23 @@ def read_git_events(root: Path) -> list[ProjectEvent]:
         text=True,
     )
     return parse_git_log(completed.stdout)
+
+
+def ingest_project(
+    root: Path, store: ForgeStore, embedder: EmbeddingEncoder
+) -> dict[str, int]:
+    sources = discover_text_sources(root)
+    source_chunks = [(source, chunk_source(source)) for source in sources]
+    chunks = [chunk for _source, items in source_chunks for chunk in items]
+    vectors = embedder.encode([chunk.text for chunk in chunks]) if chunks else []
+    events = read_git_events(root) if (root / ".git").exists() else []
+
+    with store.transaction():
+        for source, items in source_chunks:
+            store.upsert_source(source)
+            store.replace_chunks(source.id, items)
+        for chunk, vector in zip(chunks, vectors, strict=True):
+            store.put_embedding(chunk.id, vector)
+        store.upsert_events(events)
+
+    return {"sources": len(sources), "chunks": len(chunks), "events": len(events)}

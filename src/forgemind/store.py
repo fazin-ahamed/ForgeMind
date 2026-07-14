@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-import sqlite3
 import re
+import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import sqlite_vec
 
@@ -60,6 +62,17 @@ class ForgeStore:
         self.connection = sqlite3.connect(path, isolation_level=None)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except BaseException:
+            self.connection.rollback()
+            raise
+        else:
+            self.connection.commit()
 
     def upsert_source(self, source: SourceRecord) -> None:
         self.connection.execute(

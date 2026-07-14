@@ -74,3 +74,28 @@ def test_raw_ask_uses_effective_fallback_configuration(
     assert main(["ask-raw", "What changed?", "--context", str(context)]) == 0
     assert used["port"] == 9090
     assert json.loads(capsys.readouterr().out)["text"] == "UUID migration"
+
+
+def test_archive_commands_do_not_require_llama_environment(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "app.py").write_text("def run():\n    return 1\n", encoding="utf-8")
+    database = tmp_path / "forge.sqlite"
+
+    class FakeEmbedder:
+        dimensions = 3
+
+        def encode(self, texts: list[str]) -> list[list[float]]:
+            return [[float(len(text)), 0.0, 1.0] for text in texts]
+
+    monkeypatch.delenv("FORGEMIND_LLAMA_SERVER", raising=False)
+    monkeypatch.delenv("FORGEMIND_MODEL", raising=False)
+    monkeypatch.setattr("forgemind.retrieval.Embedder", FakeEmbedder)
+
+    assert main(["ingest", str(root), "--db", str(database)]) == 0
+    assert json.loads(capsys.readouterr().out)["sources"] == 1
+    assert main(["search", "run", "--db", str(database)]) == 0
+    hits = json.loads(capsys.readouterr().out)
+    assert hits[0]["path"] == "app.py"
