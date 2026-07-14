@@ -45,6 +45,13 @@ h3 { margin-bottom: .6rem; font-size: .9rem; color: var(--muted); font-weight: 5
 .ledger > section { padding: 1.35rem 0; border-top: 1px solid var(--border); }
 .ledger ol { margin: 0; padding-left: 1.5rem; color: #d5dee2; }
 .ledger li { margin: .5rem 0; overflow-wrap: anywhere; }
+.comparison { margin: 0; padding: 2rem; border-top: 1px solid var(--border); }
+.comparison-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.comparison-heading span { color: var(--accent); }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--surface); }
+caption { padding: .75rem 0; text-align: left; color: var(--muted); }
+th, td { padding: .8rem; border: 1px solid var(--border); text-align: left; }
 
 @media (max-width: 56rem) {
   .workspace { grid-template-columns: 1fr; }

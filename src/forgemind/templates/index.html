@@ -43,6 +43,20 @@
       <section><h3>Unresolved items</h3><ol id="unresolved"></ol></section>
     </aside>
   </main>
+  <section class="comparison" aria-labelledby="comparison-title">
+    <div class="comparison-heading">
+      <h2 id="comparison-title">Frozen baseline comparison</h2>
+      <span>Read-only</span>
+    </div>
+    <p>Values and 95% intervals are loaded verbatim from the frozen evaluation summary.</p>
+    <div class="table-scroll">
+      <table>
+        <caption>System quality comparison</caption>
+        <thead><tr><th scope="col">System</th><th scope="col">Factual F1</th><th scope="col">Evidence recall</th><th scope="col">Citation precision</th></tr></thead>
+        <tbody id="results"><tr><td colspan="4">Loading frozen results…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
   <script>
     const form = document.querySelector('#ask-form');
     const submit = document.querySelector('#submit');
@@ -87,6 +101,37 @@
       }));
     }
 
+    function metric(value) {
+      if (!value || typeof value !== 'object') return '—';
+      return `${Number(value.mean).toFixed(3)} [${Number(value.ci_low).toFixed(3)}, ${Number(value.ci_high).toFixed(3)}]`;
+    }
+
+    function renderResults(data) {
+      const body = document.querySelector('#results');
+      const rows = Object.entries(data).map(([system, values]) => {
+        const row = document.createElement('tr');
+        const heading = document.createElement('th');
+        heading.scope = 'row';
+        heading.textContent = system;
+        row.append(heading);
+        for (const value of [values.factual_f1, values.evidence_recall, values.citation_precision]) {
+          const cell = document.createElement('td');
+          cell.textContent = metric(value);
+          row.append(cell);
+        }
+        return row;
+      });
+      if (!rows.length) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 4;
+        cell.textContent = 'No frozen results available.';
+        row.append(cell);
+        rows.push(row);
+      }
+      body.replaceChildren(...rows);
+    }
+
     form.addEventListener('submit', async event => {
       event.preventDefault();
       submit.disabled = true;
@@ -111,6 +156,11 @@
         submit.textContent = 'Investigate';
       }
     });
+
+    fetch('/api/results', {cache: 'no-store'})
+      .then(response => response.json())
+      .then(renderResults)
+      .catch(() => renderResults({}));
   </script>
 </body>
 </html>

@@ -38,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     web = subparsers.add_parser("web")
     web.add_argument("--db", required=True)
     web.add_argument("--port", type=int, default=8000)
+    web.add_argument("--summary")
     smoke = subparsers.add_parser("smoke")
     smoke.add_argument("--runs", type=int, default=10)
     smoke.add_argument("--offline", action="store_true")
@@ -157,7 +158,12 @@ def main(argv: list[str] | None = None) -> int:
 
                 from forgemind.web import create_app
 
-                uvicorn.run(create_app(service), host="127.0.0.1", port=args.port)
+                summary = Path(args.summary) if args.summary else None
+                uvicorn.run(
+                    create_app(service, summary_path=summary),
+                    host="127.0.0.1",
+                    port=args.port,
+                )
                 return 0
             answer = service.ask(args.question, args.mode)
         if args.as_json:
