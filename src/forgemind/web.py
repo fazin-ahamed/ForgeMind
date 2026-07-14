@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Literal, Protocol
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -30,8 +30,14 @@ def create_app(
     app.mount("/static", StaticFiles(directory=package_dir / "static"), name="static")
 
     @app.get("/")
-    def index(request: Request) -> object:
-        return templates.TemplateResponse(request=request, name="index.html", context={})
+    def index(request: Request, response: Response) -> object:
+        response.headers["Cache-Control"] = "no-store"
+        return templates.TemplateResponse(
+            request=request,
+            name="index.html",
+            context={},
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -39,7 +45,12 @@ def create_app(
 
     @app.post("/api/ask")
     def ask(request: AskRequest) -> dict[str, object]:
-        return service.ask(request.question, request.mode).model_dump()
+        try:
+            return service.ask(request.question, request.mode).model_dump()
+        except Exception as error:
+            raise HTTPException(
+                status_code=503, detail="Live model unavailable"
+            ) from error
 
     @app.get("/api/results")
     def results(response: Response) -> dict[str, object]:

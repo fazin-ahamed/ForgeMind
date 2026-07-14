@@ -33,3 +33,17 @@ def test_api_rejects_unknown_reasoning_mode() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_api_converts_model_failure_to_generic_unavailable_response() -> None:
+    class FailingService:
+        def ask(self, question: str, mode: str) -> VerifiedAnswer:
+            raise RuntimeError("private upstream detail")
+
+    response = TestClient(create_app(FailingService())).post(
+        "/api/ask", json={"question": "why", "mode": "investigate"}
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Live model unavailable"}
+    assert "private upstream detail" not in response.text
