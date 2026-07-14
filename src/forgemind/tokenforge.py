@@ -34,10 +34,10 @@ class TokenForge:
         ):
             if count < 2:
                 continue
-            alias = f"<F{index:04d}>"
+            alias = f"¤{index}"
             while alias in text or alias in aliases:
                 index += 1
-                alias = f"<F{index:04d}>"
+                alias = f"¤{index}"
             aliases[alias] = value
             compressed = compressed.replace(value, alias)
             index += 1
