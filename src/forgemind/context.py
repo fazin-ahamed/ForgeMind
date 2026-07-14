@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from forgemind.domain import EvidenceItem, EvidencePack, SearchHit
+from forgemind.tokenforge import TokenForge
 
 
 def assemble_evidence(
@@ -17,9 +18,18 @@ def assemble_evidence(
     items: list[EvidenceItem] = []
     used = 0
     seen_spans: set[tuple[str, int, int]] = set()
+    tokenforge = TokenForge()
     for hit in hits:
         span = (hit.source_id, hit.start_line, hit.end_line)
-        tokens = count_tokens(hit.text)
+        compressed = tokenforge.compress(hit.text)
+        try:
+            restored = tokenforge.restore(compressed)
+            model_text = compressed.text if restored == hit.text else hit.text
+            aliases = compressed.aliases if model_text != hit.text else {}
+        except ValueError:
+            model_text = hit.text
+            aliases = {}
+        tokens = count_tokens(model_text)
         if span in seen_spans or used + tokens > budget:
             continue
         seen_spans.add(span)
@@ -33,6 +43,8 @@ def assemble_evidence(
                 start_line=hit.start_line,
                 end_line=hit.end_line,
                 text=hit.text,
+                model_text=model_text,
+                aliases=aliases,
                 channels=hit.channels,
             )
         )

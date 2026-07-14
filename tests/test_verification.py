@@ -54,6 +54,7 @@ def test_evidence_must_match_immutable_source_hash_and_exact_lines(tmp_path: Pat
         start_line=2,
         end_line=2,
         text="user_id = parseInt(raw)",
+        model_text="user_id = parseInt(raw)",
     )
 
     assert store.validate_evidence(item)
@@ -73,6 +74,7 @@ def test_verified_answer_carries_displayable_source_spans(tmp_path: Path) -> Non
         start_line=1,
         end_line=1,
         text="user_id = parseInt(raw)",
+        model_text="user_id = parseInt(raw)",
     )
     draft = AnswerDraft(
         summary="Bad parse",
@@ -99,6 +101,7 @@ def test_investigation_service_always_verifies_controller_output(tmp_path: Path)
         start_line=1,
         end_line=1,
         text="safe fact",
+        model_text="safe fact",
     )
 
     class FixedController:

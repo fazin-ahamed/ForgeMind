@@ -90,7 +90,7 @@ class ReasoningController:
                         {
                             "question": question,
                             "ledger": ledger.model_dump(),
-                            "evidence": pack.model_dump(),
+                            "evidence": pack.model_payload(),
                         },
                         ensure_ascii=False,
                     ),

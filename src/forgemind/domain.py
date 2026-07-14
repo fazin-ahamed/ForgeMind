@@ -85,6 +85,8 @@ class EvidenceItem(StrictModel):
     start_line: int = Field(ge=1)
     end_line: int = Field(ge=1)
     text: str
+    model_text: str
+    aliases: dict[str, str] = Field(default_factory=dict)
     channels: tuple[str, ...] = ()
 
 
@@ -93,6 +95,21 @@ class EvidencePack(StrictModel):
     items: list[EvidenceItem]
     archived_tokens: int = Field(ge=0)
     active_tokens: int = Field(ge=0, le=16_384)
+
+    def model_payload(self) -> dict[str, object]:
+        return {
+            "query": self.query,
+            "items": [
+                {
+                    "id": item.id,
+                    "path": item.path,
+                    "start_line": item.start_line,
+                    "end_line": item.end_line,
+                    "text": item.model_text,
+                }
+                for item in self.items
+            ],
+        }
 
 
 class Hypothesis(StrictModel):

@@ -39,3 +39,25 @@ def test_evidence_pack_never_exceeds_budget() -> None:
 def test_evidence_pack_rejects_oversized_active_budget() -> None:
     with pytest.raises(ValueError, match="16,384"):
         assemble_evidence("why", [], lambda text: len(text.split()), budget=16_385)
+
+
+def test_model_payload_uses_compressed_text_but_retains_exact_source() -> None:
+    repeated = "customer_identifier customer_identifier customer_identifier"
+    hit = SearchHit(
+        "c1",
+        "s1",
+        "hash",
+        "a.py",
+        1,
+        1,
+        repeated,
+        1.0,
+        ("lexical",),
+    )
+
+    pack = assemble_evidence("why", [hit], lambda text: len(text.split()), budget=20)
+    payload = pack.model_payload()
+
+    assert pack.items[0].text == repeated
+    assert payload["items"][0]["text"] != repeated
+    assert "source_sha256" not in payload["items"][0]
