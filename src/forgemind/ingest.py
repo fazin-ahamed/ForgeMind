@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import subprocess
 from pathlib import Path
 
-from forgemind.domain import SourceRecord
+from tree_sitter_language_pack import get_parser
+
+from forgemind.domain import ChunkRecord, ProjectEvent, SourceRecord
 
 
 EXCLUDED_PARTS = {
@@ -28,6 +32,14 @@ SECRET_PATTERNS = (
     ),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
 )
+LANGUAGES = {
+    ".py": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+}
+FUNCTION_TYPES = {"function_definition", "function_declaration", "method_definition"}
 
 
 def is_likely_secret(path: str, text: str) -> bool:
@@ -57,3 +69,56 @@ def discover_text_sources(root: Path) -> list[SourceRecord]:
             continue
         sources.append(SourceRecord.from_text(relative, text, resolved.stat().st_mtime_ns))
     return sources
+
+
+def _chunk(source: SourceRecord, start: int, end: int, symbol: str | None) -> ChunkRecord:
+    text = "\n".join(source.text.splitlines()[start - 1 : end])
+    chunk_id = hashlib.sha256(f"{source.id}:{start}:{end}".encode()).hexdigest()
+    return ChunkRecord(chunk_id, source.id, source.path, start, end, text, symbol)
+
+
+def chunk_source(source: SourceRecord, max_lines: int = 120) -> list[ChunkRecord]:
+    language = LANGUAGES.get(Path(source.path).suffix.lower())
+    if language:
+        source_bytes = source.text.encode("utf-8")
+        stack = [get_parser(language).parse(source_bytes).root_node]
+        chunks: list[ChunkRecord] = []
+        while stack:
+            node = stack.pop()
+            if node.type in FUNCTION_TYPES:
+                name = node.child_by_field_name("name")
+                symbol = source_bytes[name.start_byte : name.end_byte].decode() if name else None
+                chunks.append(
+                    _chunk(source, node.start_point.row + 1, node.end_point.row + 1, symbol)
+                )
+            else:
+                stack.extend(reversed(node.children))
+        if chunks:
+            return chunks
+    line_count = len(source.text.splitlines())
+    return [
+        _chunk(source, start, min(start + max_lines - 1, line_count), None)
+        for start in range(1, line_count + 1, max_lines)
+    ]
+
+
+def parse_git_log(text: str) -> list[ProjectEvent]:
+    events: list[ProjectEvent] = []
+    for raw_record in text.split("\x00"):
+        record = raw_record.strip("\r\n")
+        if not record:
+            continue
+        commit, occurred_at, summary = record.split("\x1f", 2)
+        event_id = hashlib.sha256(commit.encode()).hexdigest()
+        events.append(ProjectEvent(event_id, commit, occurred_at, summary))
+    return events
+
+
+def read_git_events(root: Path) -> list[ProjectEvent]:
+    completed = subprocess.run(
+        ["git", "-C", str(root), "log", "--format=%H%x1f%aI%x1f%s%x00"],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return parse_git_log(completed.stdout)

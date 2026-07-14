@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from forgemind.domain import SourceRecord
+from forgemind.ingest import chunk_source, parse_git_log
 from forgemind.ingest import discover_text_sources
 
 
@@ -22,3 +24,34 @@ def test_discovery_skips_binary_secret_vendor_and_escaping_symlink(tmp_path: Pat
     sources = discover_text_sources(tmp_path)
 
     assert [source.path for source in sources] == ["src/app.py"]
+
+
+def test_python_functions_become_line_addressable_chunks() -> None:
+    source = SourceRecord.from_text(
+        "auth.py",
+        "def login(user):\n    return user.id\n\ndef logout(user):\n    return None\n",
+        1,
+    )
+
+    chunks = chunk_source(source)
+
+    assert [(chunk.symbol, chunk.start_line, chunk.end_line) for chunk in chunks] == [
+        ("login", 1, 2),
+        ("logout", 4, 5),
+    ]
+
+
+def test_parse_git_log_creates_temporal_events() -> None:
+    events = parse_git_log(
+        "abc123\x1f2026-04-18T10:00:00+00:00\x1fMigrate users to UUID\x00"
+    )
+    assert events[0].commit == "abc123"
+    assert events[0].occurred_at == "2026-04-18T10:00:00+00:00"
+
+
+def test_parse_git_log_strips_record_separator_newlines() -> None:
+    events = parse_git_log(
+        "a\x1f2026-04-18T10:00:00+00:00\x1ffirst\x00\n"
+        "b\x1f2026-04-19T10:00:00+00:00\x1fsecond\x00\n"
+    )
+    assert [event.commit for event in events] == ["a", "b"]

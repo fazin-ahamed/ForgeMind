@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from forgemind.domain import SourceRecord
+from forgemind.domain import ChunkRecord, ProjectEvent, SourceRecord
 
 
 SCHEMA = """
@@ -74,3 +74,38 @@ class ForgeStore:
         if table not in {"sources", "chunks", "events", "relations"}:
             raise ValueError(f"unsupported table: {table}")
         return int(self.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
+
+    def replace_chunks(self, source_id: str, chunks: list[ChunkRecord]) -> None:
+        old_ids = [
+            row[0]
+            for row in self.connection.execute(
+                "SELECT id FROM chunks WHERE source_id = ?", (source_id,)
+            )
+        ]
+        self.connection.executemany(
+            "DELETE FROM chunks_fts WHERE chunk_id = ?", ((chunk_id,) for chunk_id in old_ids)
+        )
+        self.connection.execute("DELETE FROM chunks WHERE source_id = ?", (source_id,))
+        for chunk in chunks:
+            self.connection.execute(
+                "INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    chunk.id,
+                    chunk.source_id,
+                    chunk.path,
+                    chunk.start_line,
+                    chunk.end_line,
+                    chunk.text,
+                    chunk.symbol,
+                ),
+            )
+            self.connection.execute(
+                "INSERT INTO chunks_fts(chunk_id, path, symbol, text) VALUES (?, ?, ?, ?)",
+                (chunk.id, chunk.path, chunk.symbol or "", chunk.text),
+            )
+
+    def upsert_events(self, events: list[ProjectEvent]) -> None:
+        self.connection.executemany(
+            "INSERT OR IGNORE INTO events VALUES (?, ?, ?, ?)",
+            ((event.id, event.commit, event.occurred_at, event.summary) for event in events),
+        )

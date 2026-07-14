@@ -6,7 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "forgemind"
 version = "0.1.0"
 requires-python = ">=3.11,<3.13"
-dependencies = ["httpx>=0.28,<1"]
+dependencies = [
+  "httpx>=0.28,<1",
+  "tree-sitter-language-pack>=0.9,<1",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.4,<9"]
