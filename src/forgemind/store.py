@@ -8,7 +8,7 @@ from typing import Iterator
 
 import sqlite_vec
 
-from forgemind.domain import ChunkRecord, ProjectEvent, SourceRecord
+from forgemind.domain import ChunkRecord, EvidenceItem, ProjectEvent, SourceRecord
 
 
 SCHEMA = """
@@ -177,3 +177,19 @@ class ForgeStore:
             chunk_ids,
         ).fetchall()
         return {str(row["id"]): row for row in rows}
+
+    def validate_evidence(self, item: EvidenceItem) -> bool:
+        row = self.connection.execute(
+            "SELECT path, sha256, text FROM sources WHERE id = ?",
+            (item.source_id,),
+        ).fetchone()
+        if (
+            row is None
+            or row["path"] != item.path
+            or row["sha256"] != item.source_sha256
+        ):
+            return False
+        lines = row["text"].splitlines()
+        if item.start_line > item.end_line or item.end_line > len(lines):
+            return False
+        return "\n".join(lines[item.start_line - 1 : item.end_line]) == item.text
