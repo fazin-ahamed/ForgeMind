@@ -135,14 +135,28 @@ def ingest_project(
     root: Path, store: ForgeStore, embedder: EmbeddingEncoder
 ) -> dict[str, int]:
     sources = discover_text_sources(root)
-    source_chunks = [(source, chunk_source(source)) for source in sources]
-    chunks = [chunk for _source, items in source_chunks for chunk in items]
+    heads = {source.path: source for source in store.current_sources()}
+    changed: list[tuple[SourceRecord, SourceRecord | None, list[ChunkRecord]]] = []
+    for source in sources:
+        current = heads.get(source.path)
+        if current is not None and current.sha256 == source.sha256:
+            continue
+        changed.append((source, current, chunk_source(source)))
+    discovered_paths = {source.path for source in sources}
+    retired = [source for path, source in heads.items() if path not in discovered_paths]
+    chunks = [chunk for _source, _current, items in changed for chunk in items]
     vectors = embedder.encode([chunk.text for chunk in chunks]) if chunks else []
     events = read_git_events(root) if (root / ".git").exists() else []
 
     with store.transaction():
-        for source, items in source_chunks:
+        for source in retired:
+            store.remove_active_chunks(source.id)
+            store.remove_source_head(source.path)
+        for source, current, items in changed:
+            if current is not None:
+                store.remove_active_chunks(current.id)
             store.upsert_source(source)
+            store.set_source_head(source)
             store.replace_chunks(source.id, items)
         for chunk, vector in zip(chunks, vectors, strict=True):
             store.put_embedding(chunk.id, vector)

@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS sources (
     text TEXT NOT NULL,
     UNIQUE(path, sha256)
 );
+CREATE TABLE IF NOT EXISTS source_heads (
+    path TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES sources(id)
+);
 CREATE TABLE IF NOT EXISTS chunks (
     id TEXT PRIMARY KEY,
     source_id TEXT NOT NULL REFERENCES sources(id),
@@ -89,6 +93,49 @@ class ForgeStore:
             "SELECT * FROM sources WHERE id = ?", (source_id,)
         ).fetchone()
         return SourceRecord(**dict(row)) if row else None
+
+    def current_source(self, path: str) -> SourceRecord | None:
+        row = self.connection.execute(
+            "SELECT sources.* FROM source_heads "
+            "JOIN sources ON sources.id = source_heads.source_id "
+            "WHERE source_heads.path = ?",
+            (path,),
+        ).fetchone()
+        return SourceRecord(**dict(row)) if row else None
+
+    def current_sources(self) -> list[SourceRecord]:
+        rows = self.connection.execute(
+            "SELECT sources.* FROM source_heads "
+            "JOIN sources ON sources.id = source_heads.source_id "
+            "ORDER BY source_heads.path"
+        ).fetchall()
+        return [SourceRecord(**dict(row)) for row in rows]
+
+    def set_source_head(self, source: SourceRecord) -> None:
+        self.connection.execute(
+            "INSERT OR REPLACE INTO source_heads(path, source_id) VALUES (?, ?)",
+            (source.path, source.id),
+        )
+
+    def remove_source_head(self, path: str) -> None:
+        self.connection.execute("DELETE FROM source_heads WHERE path = ?", (path,))
+
+    def remove_active_chunks(self, source_id: str) -> None:
+        chunk_ids = [
+            row[0]
+            for row in self.connection.execute(
+                "SELECT id FROM chunks WHERE source_id = ?", (source_id,)
+            )
+        ]
+        self.connection.executemany(
+            "DELETE FROM chunks_fts WHERE chunk_id = ?",
+            ((chunk_id,) for chunk_id in chunk_ids),
+        )
+        self.connection.executemany(
+            "DELETE FROM chunk_vectors WHERE chunk_id = ?",
+            ((chunk_id,) for chunk_id in chunk_ids),
+        )
+        self.connection.execute("DELETE FROM chunks WHERE source_id = ?", (source_id,))
 
     def count(self, table: str) -> int:
         if table not in {"sources", "chunks", "events", "relations"}:

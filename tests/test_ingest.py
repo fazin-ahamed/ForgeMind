@@ -82,7 +82,8 @@ def test_ingest_project_is_idempotent(tmp_path: Path) -> None:
     first = ingest_project(root, store, FakeEmbedder())
     second = ingest_project(root, store, FakeEmbedder())
 
-    assert first == second == {"sources": 1, "chunks": 1, "events": 0}
+    assert first == {"sources": 1, "chunks": 1, "events": 0}
+    assert second == {"sources": 1, "chunks": 0, "events": 0}
     assert store.count("sources") == 1
     assert store.count("chunks") == 1
 
