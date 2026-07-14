@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from pathlib import Path
+
+from forgemind.context import assemble_evidence
+from forgemind.domain import AnswerDraft, ControllerDecision, EvidencePack, ReasoningLedger
+
+
+MODE_CYCLES = {"retrieve": 1, "reason": 3, "investigate": 6}
+STOPPED = ["Investigation stopped without sufficient evidence."]
+
+
+class ReasoningController:
+    def __init__(
+        self,
+        retriever: object,
+        client: object,
+        count_tokens: Callable[[str], int],
+    ) -> None:
+        self.retriever = retriever
+        self.client = client
+        self.count_tokens = count_tokens
+        self.system_prompt = (
+            Path(__file__).parent / "prompts" / "reasoning-system.txt"
+        ).read_text(encoding="utf-8")
+
+    def investigate(
+        self, question: str, mode: str = "reason"
+    ) -> tuple[AnswerDraft, ReasoningLedger, list[EvidencePack]]:
+        if mode not in MODE_CYCLES:
+            raise ValueError(f"unsupported mode: {mode}")
+        ledger = ReasoningLedger(goal=question)
+        query = question
+        packs: list[EvidencePack] = []
+        queries: list[str] = []
+        evidence_ids: list[str] = []
+        seen_evidence: set[str] = set()
+        broadened = False
+
+        for cycle in range(1, MODE_CYCLES[mode] + 1):
+            queries.append(query)
+            pack = assemble_evidence(
+                query,
+                self.retriever.search(query, 20),
+                self.count_tokens,
+            )
+            ledger = ledger.model_copy(
+                update={"cycle": cycle, "retrieval_queries": queries}
+            )
+            if not pack.items:
+                packs.append(pack)
+                if broadened:
+                    break
+                broadened = True
+                query = f"{question} source code project history configuration"
+                continue
+
+            new_ids = [item.id for item in pack.items if item.id not in seen_evidence]
+            if not new_ids:
+                break
+            packs.append(pack)
+            evidence_ids.extend(new_ids)
+            seen_evidence.update(new_ids)
+
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "question": question,
+                            "ledger": ledger.model_dump(),
+                            "evidence": pack.model_dump(),
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ]
+            result = self.client.complete(
+                messages,
+                json_schema=ControllerDecision.model_json_schema(),
+            )
+            try:
+                decision = ControllerDecision.model_validate_json(result.text)
+            except ValueError:
+                repair = self.client.complete(
+                    [
+                        {
+                            "role": "system",
+                            "content": "Return valid JSON matching the provided schema. /no_think",
+                        },
+                        {"role": "user", "content": result.text},
+                    ],
+                    json_schema=ControllerDecision.model_json_schema(),
+                )
+                decision = ControllerDecision.model_validate_json(repair.text)
+
+            ledger = decision.ledger.model_copy(
+                update={
+                    "goal": question,
+                    "cycle": cycle,
+                    "retrieval_queries": list(queries),
+                    "evidence_ids": list(evidence_ids),
+                }
+            )
+            if decision.action == "answer":
+                assert decision.answer is not None
+                return decision.answer, ledger, packs
+            query = decision.query or ""
+            if not query or query in queries:
+                break
+
+        return (
+            AnswerDraft(summary="Insufficient evidence", claims=[], unresolved=STOPPED),
+            ledger,
+            packs,
+        )

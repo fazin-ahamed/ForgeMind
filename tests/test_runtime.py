@@ -133,7 +133,10 @@ def test_llama_client_posts_deterministic_chat_request(tmp_path: Path, monkeypat
     monkeypatch.setattr("forgemind.runtime.httpx.Client", FakeClient)
     config = RuntimeConfig(tmp_path / "server", tmp_path / "model")
 
-    result = LlamaClient(config).complete([{"role": "user", "content": "hi"}], max_tokens=7)
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+    result = LlamaClient(config).complete(
+        [{"role": "user", "content": "hi"}], max_tokens=7, json_schema=schema
+    )
 
     assert result.text == "ok"
     assert sent["url"] == "http://127.0.0.1:8080/v1/chat/completions"
@@ -142,4 +145,5 @@ def test_llama_client_posts_deterministic_chat_request(tmp_path: Path, monkeypat
         "temperature": 0,
         "max_tokens": 7,
         "cache_prompt": True,
+        "response_format": {"type": "json_schema", "schema": schema},
     }

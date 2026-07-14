@@ -177,16 +177,20 @@ class LlamaClient:
         self,
         messages: list[dict[str, str]],
         max_tokens: int | None = None,
+        json_schema: dict[str, object] | None = None,
     ) -> GenerationResult:
+        body: dict[str, object] = {
+            "messages": messages,
+            "temperature": 0,
+            "max_tokens": max_tokens or self.config.max_output_tokens,
+            "cache_prompt": True,
+        }
+        if json_schema is not None:
+            body["response_format"] = {"type": "json_schema", "schema": json_schema}
         with httpx.Client(timeout=self.config.timeout_seconds) as client:
             response = client.post(
                 f"{self.config.server_url}/v1/chat/completions",
-                json={
-                    "messages": messages,
-                    "temperature": 0,
-                    "max_tokens": max_tokens or self.config.max_output_tokens,
-                    "cache_prompt": True,
-                },
+                json=body,
             )
             response.raise_for_status()
             return parse_chat_response(response.json())

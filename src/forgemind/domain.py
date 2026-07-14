@@ -107,6 +107,8 @@ class VerifiedFact(StrictModel):
 
 class ReasoningLedger(StrictModel):
     goal: str
+    retrieval_queries: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     verified_facts: list[VerifiedFact] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
