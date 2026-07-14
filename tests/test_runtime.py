@@ -12,6 +12,7 @@ from forgemind.runtime import (
     parse_used_vram_mib,
     physical_ram_mib,
     probe_hardware,
+    windows_creation_flags,
 )
 
 
@@ -26,6 +27,15 @@ def test_parse_nvidia_smi_returns_typed_hardware_profile() -> None:
 
 def test_physical_ram_probe_is_positive() -> None:
     assert physical_ram_mib() > 0
+
+
+def test_creation_flags_are_platform_safe() -> None:
+    class FakeSubprocess:
+        CREATE_NO_WINDOW = 123
+
+    assert windows_creation_flags("posix", FakeSubprocess()) == 0
+    assert windows_creation_flags("nt", FakeSubprocess()) == 123
+    assert windows_creation_flags("nt", object()) == 0
 
 
 def test_probe_hardware_calls_nvidia_smi() -> None:

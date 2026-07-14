@@ -86,9 +86,22 @@ def physical_ram_mib() -> int:
         return int(sysconf("SC_PAGE_SIZE") * sysconf("SC_PHYS_PAGES") / 1_048_576)
     status = _MemoryStatus()
     status.length = ctypes.sizeof(status)
-    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+    windll = getattr(ctypes, "windll", None)
+    if windll is None:
+        raise OSError("Windows memory API is unavailable")
+    kernel32 = getattr(windll, "kernel32")
+    global_memory_status = getattr(kernel32, "GlobalMemoryStatusEx")
+    if not global_memory_status(ctypes.byref(status)):
         raise OSError("GlobalMemoryStatusEx failed")
     return int(status.total_physical / 1_048_576)
+
+
+def windows_creation_flags(
+    platform_name: str = os.name, subprocess_module: object = subprocess
+) -> int:
+    if platform_name != "nt":
+        return 0
+    return int(getattr(subprocess_module, "CREATE_NO_WINDOW", 0))
 
 
 def probe_hardware(
@@ -139,7 +152,7 @@ class LlamaServer:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            creationflags=windows_creation_flags(),
         )
         self.wait_ready()
 
