@@ -1,3 +1,5 @@
+import hashlib
+
 import pytest
 
 import forgemind.benchmark as benchmark
@@ -9,6 +11,27 @@ from forgemind.benchmark import (
     RuntimeCase,
     validate_bundle,
 )
+
+
+def test_directory_hash_order_is_platform_independent(
+    tmp_path, monkeypatch
+) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    (archive / "a.txt").write_bytes(b"lower")
+    (archive / "Z.txt").write_bytes(b"upper")
+    monkeypatch.setattr(
+        type(tmp_path),
+        "__lt__",
+        lambda self, other: str(self) < str(other),
+    )
+    expected = hashlib.sha256()
+    expected.update(b"a.txt")
+    expected.update(b"lower")
+    expected.update(b"Z.txt")
+    expected.update(b"upper")
+
+    assert benchmark.sha256_path(archive) == expected.hexdigest()
 
 
 def runtime_case(case_id: str = "repo-32k-00") -> RuntimeCase:
@@ -126,6 +149,35 @@ def test_exact_answer_normalizes_unicode_and_case() -> None:
     assert metrics.answer_f1 == 1.0
 
 
+def test_exact_answer_accepts_identifier_inside_explanation() -> None:
+    metrics = benchmark.score_case(
+        gold_case(),
+        benchmark_run(
+            "The matching function is `validate_session`.",
+            gold_case().evidence,
+        ),
+    )
+
+    assert metrics.answer_f1 == 1.0
+
+
+def test_citation_overlap_uses_path_and_lines_across_hash_namespaces() -> None:
+    runtime_span = gold_case().evidence[0].model_copy(
+        update={
+            "source_id": "c" * 64,
+            "source_sha256": "d" * 64,
+        }
+    )
+
+    metrics = benchmark.score_case(
+        gold_case(), benchmark_run("validate_session", [runtime_span])
+    )
+
+    assert metrics.citation_precision == 1.0
+    assert metrics.citation_recall == 1.0
+    assert metrics.retrieval_recall20 == 1.0
+
+
 def test_whole_file_citation_loses_precision() -> None:
     broad = gold_case().evidence[0].model_copy(
         update={"start_line": 1, "end_line": 100}
@@ -166,6 +218,24 @@ def test_set_answer_parses_concise_text_and_fact_recall() -> None:
 
     assert metrics.answer_f1 == 1.0
     assert metrics.fact_recall == 1.0
+
+
+def test_set_answer_finds_values_inside_key_value_explanation() -> None:
+    gold = gold_case().model_copy(
+        update={
+            "answer": AnswerSpec(kind="set", accepted=["VALUE-1", "VALUE-2"]),
+        }
+    )
+
+    metrics = benchmark.score_case(
+        gold,
+        benchmark_run(
+            "KEY-1 maps to VALUE-1, and KEY-2 maps to VALUE-2.",
+            gold.evidence,
+        ),
+    )
+
+    assert metrics.answer_f1 == 1.0
 
 
 def test_summary_is_complete_and_paired() -> None:

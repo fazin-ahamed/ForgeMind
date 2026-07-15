@@ -4,6 +4,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import forgemind.cli as cli
 import pytest
@@ -18,6 +19,41 @@ from forgemind.benchmark import (
 from forgemind.cli import build_parser, main
 from forgemind.domain import GenerationResult, HardwareProfile
 from forgemind.domain import VerifiedAnswer
+
+
+def test_benchmark_provenance_uses_supplied_cloud_source_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FORGEMIND_SOURCE_REVISION", "modal-revision")
+    monkeypatch.setenv("FORGEMIND_DIRTY_WORKTREE", "true")
+    monkeypatch.setenv("FORGEMIND_RUNTIME_SHA256", "frozen-runtime-hash")
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout="git-revision\n"),
+    )
+    runtime = tmp_path / "runtime.jsonl"
+    runtime.write_text("{}\n", encoding="utf-8")
+    database_root = tmp_path / "databases"
+    database_root.mkdir()
+    config = cli.RuntimeConfig(
+        llama_server=tmp_path / "llama-server",
+        model=tmp_path / "model.gguf",
+    )
+
+    provenance = cli._benchmark_provenance(
+        config,
+        "model-hash",
+        "config-hash",
+        database_root,
+        runtime,
+        [],
+    )
+
+    assert provenance["source_revision"] == "modal-revision"
+    assert provenance["dirty_worktree"] is True
+    assert provenance["runtime_sha256"] == "frozen-runtime-hash"
+    assert provenance["execution_runtime_sha256"] == sha256_path(runtime)
 
 
 def _write_jsonl(path: Path, rows) -> None:

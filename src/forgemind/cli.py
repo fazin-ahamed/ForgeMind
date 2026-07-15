@@ -353,21 +353,35 @@ def _benchmark_provenance(
 ) -> dict[str, object]:
     from forgemind.benchmark import sha256_path
 
-    source_revision = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    dirty_worktree = bool(
-        subprocess.run(
-            ["git", "status", "--porcelain"],
+    source_revision = os.environ.get("FORGEMIND_SOURCE_REVISION")
+    dirty_value = os.environ.get("FORGEMIND_DIRTY_WORKTREE")
+    if source_revision is not None:
+        if dirty_value not in {"true", "false"}:
+            raise ValueError(
+                "FORGEMIND_DIRTY_WORKTREE must be true or false when "
+                "FORGEMIND_SOURCE_REVISION is set"
+            )
+        dirty_worktree = dirty_value == "true"
+    else:
+        source_revision = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
             text=True,
         ).stdout.strip()
+        dirty_worktree = bool(
+            subprocess.run(
+                ["git", "status", "--porcelain"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+    execution_runtime_sha256 = sha256_path(runtime_path)
+    frozen_runtime_sha256 = os.environ.get(
+        "FORGEMIND_RUNTIME_SHA256", execution_runtime_sha256
     )
-    return {
+    provenance: dict[str, object] = {
         "source_revision": source_revision,
         "dirty_worktree": dirty_worktree,
         "python": platform.python_version(),
@@ -376,7 +390,7 @@ def _benchmark_provenance(
         "runtime": config.as_dict(),
         "model_sha256": model_sha256,
         "config_sha256": config_sha256,
-        "runtime_sha256": sha256_path(runtime_path),
+        "runtime_sha256": frozen_runtime_sha256,
         "archive_sha256": {
             case.archive_id: case.archive_sha256
             for case in cases
@@ -387,6 +401,9 @@ def _benchmark_provenance(
             for path in sorted(database_root.glob("*.json"))
         ],
     }
+    if frozen_runtime_sha256 != execution_runtime_sha256:
+        provenance["execution_runtime_sha256"] = execution_runtime_sha256
+    return provenance
 
 
 def evaluate_benchmark(

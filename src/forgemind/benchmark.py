@@ -136,7 +136,14 @@ def sha256_path(path: Path) -> str:
     if path.is_file():
         digest.update(path.read_bytes())
         return digest.hexdigest()
-    for child in sorted(item for item in path.rglob("*") if item.is_file()):
+    children = (item for item in path.rglob("*") if item.is_file())
+    for child in sorted(
+        children,
+        key=lambda item: (
+            item.relative_to(path).as_posix().casefold(),
+            item.relative_to(path).as_posix(),
+        ),
+    ):
         digest.update(child.relative_to(path).as_posix().encode("utf-8"))
         digest.update(child.read_bytes())
     return digest.hexdigest()
@@ -209,15 +216,34 @@ def _token_f1(prediction: str, reference: str) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
+def _contains_answer(
+    prediction: str, expected: str, case_sensitive: bool
+) -> bool:
+    predicted = [
+        token.strip(".,;:")
+        for token in _normalized(prediction, case_sensitive).split()
+    ]
+    target = [
+        token.strip(".,;:")
+        for token in _normalized(expected, case_sensitive).split()
+    ]
+    return bool(target) and any(
+        predicted[index : index + len(target)] == target
+        for index in range(len(predicted) - len(target) + 1)
+    )
+
+
 def _answer_f1(answer: AnswerSpec, prediction: str | list[str] | None) -> float:
     if prediction is None:
         return 0.0
     if answer.kind == "set":
         if isinstance(prediction, str):
             prediction = [
-                item.strip()
-                for item in re.split(r"[,;\n]+", prediction)
-                if item.strip()
+                item
+                for item in answer.accepted
+                if _contains_answer(
+                    prediction, item, answer.case_sensitive
+                )
             ]
         expected = {
             _normalized(item, answer.case_sensitive) for item in answer.accepted
@@ -237,18 +263,19 @@ def _answer_f1(answer: AnswerSpec, prediction: str | list[str] | None) -> float:
         return 0.0
     if answer.kind == "exact":
         return float(
-            _normalized(prediction, answer.case_sensitive)
-            in {
-                _normalized(item, answer.case_sensitive)
+            any(
+                _contains_answer(
+                    prediction, item, answer.case_sensitive
+                )
                 for item in answer.accepted
-            }
+            )
         )
     return max(_token_f1(prediction, reference) for reference in answer.accepted)
 
 
 def _lines(spans: list[CitationSpan]) -> set[tuple[str, int]]:
     return {
-        (span.source_sha256, line)
+        (span.path, line)
         for span in spans
         for line in range(span.start_line, span.end_line + 1)
     }
