@@ -15,6 +15,7 @@ from forgemind.domain import (
     ReasoningLedger,
     SearchHit,
     VerifiedAnswer,
+    model_schema_with_evidence_ids,
 )
 from forgemind.store import ForgeStore
 from forgemind.verification import verify_answer
@@ -104,6 +105,9 @@ class ReasoningController:
             evidence_ids.extend(new_ids)
             seen_evidence.update(new_ids)
             ledger = ledger.model_copy(update={"evidence_ids": list(evidence_ids)})
+            schema = model_schema_with_evidence_ids(
+                ControllerDecision, evidence_ids
+            )
 
             messages = [
                 {"role": "system", "content": self.system_prompt},
@@ -122,7 +126,7 @@ class ReasoningController:
             result = self.client.complete(
                 messages,
                 max_tokens=CONTROLLER_MAX_TOKENS,
-                json_schema=ControllerDecision.model_json_schema(),
+                json_schema=schema,
             )
             generations.append(result)
             try:
@@ -137,7 +141,7 @@ class ReasoningController:
                         {"role": "user", "content": result.text},
                     ],
                     max_tokens=CONTROLLER_MAX_TOKENS,
-                    json_schema=ControllerDecision.model_json_schema(),
+                    json_schema=schema,
                 )
                 generations.append(repair)
                 try:

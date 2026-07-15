@@ -77,6 +77,29 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def model_schema_with_evidence_ids(
+    model: type[BaseModel], evidence_ids: list[str]
+) -> dict[str, object]:
+    schema = model.model_json_schema()
+    allowed = list(dict.fromkeys(evidence_ids))
+
+    def constrain(value: object) -> None:
+        if isinstance(value, dict):
+            properties = value.get("properties")
+            if isinstance(properties, dict):
+                field = properties.get("evidence_ids")
+                if isinstance(field, dict):
+                    field["items"] = {"enum": allowed, "type": "string"}
+            for child in value.values():
+                constrain(child)
+        elif isinstance(value, list):
+            for child in value:
+                constrain(child)
+
+    constrain(schema)
+    return schema
+
+
 class EvidenceItem(StrictModel):
     id: str
     source_id: str

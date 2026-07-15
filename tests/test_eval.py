@@ -220,8 +220,15 @@ def test_vector_adapter_uses_runtime_evidence_without_gold_manifest(
             return [hit]
 
     class Client:
+        def __init__(self) -> None:
+            self.allowed_ids: list[list[str] | None] = []
+
         def complete(self, messages, max_tokens=None, json_schema=None) -> GenerationResult:
             assert "gold-secret" not in str(messages)
+            items = json_schema["$defs"]["Claim"]["properties"]["evidence_ids"][
+                "items"
+            ]
+            self.allowed_ids.append(items.get("enum"))
             return GenerationResult(
                 '{"summary":"Migration","claims":[{"text":"UUID migration","evidence_ids":["c1"]}],"unresolved":[]}',
                 10,
@@ -230,11 +237,12 @@ def test_vector_adapter_uses_runtime_evidence_without_gold_manifest(
                 2.0,
             )
 
+    client = Client()
     systems = ControlledSystems(
         store,
         Retriever(),
         controller=object(),
-        client=Client(),
+        client=client,
         count_tokens=lambda text: len(text.split()),
         vram_mib=lambda: 123,
         run_group_id="g1",
@@ -245,6 +253,7 @@ def test_vector_adapter_uses_runtime_evidence_without_gold_manifest(
 
     run = systems.vector(case)
 
+    assert client.allowed_ids == [["c1"]]
     assert run.system == "vector"
     assert run.answer == "Migration"
     assert [item.path for item in run.retrieved] == ["session.py"]

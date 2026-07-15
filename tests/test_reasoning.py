@@ -104,10 +104,15 @@ class RepairingClient:
     def __init__(self) -> None:
         self.calls = 0
         self.max_tokens: list[int | None] = []
+        self.allowed_ids: list[list[str] | None] = []
 
     def complete(self, messages, max_tokens=None, json_schema=None) -> GenerationResult:
         self.calls += 1
         self.max_tokens.append(max_tokens)
+        items = json_schema["$defs"]["Claim"]["properties"]["evidence_ids"][
+            "items"
+        ]
+        self.allowed_ids.append(items.get("enum"))
         if self.calls == 1:
             return GenerationResult("not json", 1, 1, 1.0, 1.0)
         payload = {
@@ -131,6 +136,7 @@ def test_controller_repairs_invalid_model_json_once() -> None:
 
     assert client.calls == 2
     assert client.max_tokens == [2048, 2048]
+    assert client.allowed_ids == [["c1"], ["c1"]]
     assert draft.claims[0].evidence_ids == ["c1"]
     assert ledger.cycle == 1
     assert len(generations) == 2

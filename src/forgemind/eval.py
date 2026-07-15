@@ -24,6 +24,7 @@ from forgemind.domain import (
     ReasoningLedger,
     SearchHit,
     VerifiedAnswer,
+    model_schema_with_evidence_ids,
 )
 from forgemind.store import ForgeStore
 from forgemind.verification import verify_answer
@@ -290,6 +291,9 @@ class ControlledSystems:
             budget=budget,
             archived_tokens=case.archived_tokens,
         )
+        schema = model_schema_with_evidence_ids(
+            AnswerDraft, [item.id for item in pack.items]
+        )
         result = self.client.complete(
             [
                 {
@@ -312,7 +316,7 @@ class ControlledSystems:
                 },
             ],
             max_tokens=ANSWER_MAX_TOKENS,
-            json_schema=AnswerDraft.model_json_schema(),
+            json_schema=schema,
         )
         generations = [result]
         try:
@@ -331,7 +335,7 @@ class ControlledSystems:
                     {"role": "user", "content": result.text},
                 ],
                 max_tokens=ANSWER_MAX_TOKENS,
-                json_schema=AnswerDraft.model_json_schema(),
+                json_schema=schema,
             )
             generations.append(repair)
             draft = AnswerDraft.model_validate_json(repair.text)
