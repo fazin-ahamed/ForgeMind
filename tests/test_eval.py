@@ -236,7 +236,7 @@ def test_one_shot_repairs_truncated_json_once(tmp_path: Path) -> None:
 
     assert run.answer == "Migration"
     assert len(client.calls) == 2
-    assert [max_tokens for _messages, max_tokens in client.calls] == [1536, 1536]
+    assert [max_tokens for _messages, max_tokens in client.calls] == [2048, 2048]
     assert "compact" in client.calls[1][0][0]["content"].lower()
     assert run.cumulative_prompt_tokens == 16
     assert run.completion_tokens == 8

@@ -14,7 +14,7 @@ class RuntimeConfig:
     context_tokens: int = 16_384
     batch_tokens: int = 512
     gpu_layers: int = -1
-    max_output_tokens: int = 1_536
+    max_output_tokens: int = 2_048
     timeout_seconds: float = 240.0
 
     @property

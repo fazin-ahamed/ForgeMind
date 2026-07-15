@@ -36,6 +36,16 @@ def test_evidence_pack_never_exceeds_budget() -> None:
     assert [item.id for item in pack.items] == ["c1"]
 
 
+def test_default_budget_reserves_prompt_envelope() -> None:
+    hit = SearchHit(
+        "c1", "s1", "hash", "large.txt", 1, 1, "x", 1.0, ("lexical",)
+    )
+
+    pack = assemble_evidence("why", [hit], lambda _text: 10_001)
+
+    assert pack.items == []
+
+
 def test_evidence_pack_rejects_oversized_active_budget() -> None:
     with pytest.raises(ValueError, match="32,768"):
         assemble_evidence("why", [], lambda text: len(text.split()), budget=32_769)

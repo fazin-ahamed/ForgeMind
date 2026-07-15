@@ -130,7 +130,7 @@ def test_controller_repairs_invalid_model_json_once() -> None:
     draft, ledger, _packs, generations = controller.investigate("why")
 
     assert client.calls == 2
-    assert client.max_tokens == [1536, 1536]
+    assert client.max_tokens == [2048, 2048]
     assert draft.claims[0].evidence_ids == ["c1"]
     assert ledger.cycle == 1
     assert len(generations) == 2
@@ -146,6 +146,21 @@ def test_controller_returns_generation_usage_for_primary_and_repair_calls() -> N
 
     assert [item.prompt_tokens for item in generations] == [1, 1]
     assert [item.completion_tokens for item in generations] == [1, 1]
+
+
+def test_controller_abstains_after_failed_json_repair() -> None:
+    class BrokenClient:
+        def complete(self, messages, max_tokens=None, json_schema=None) -> GenerationResult:
+            return GenerationResult("not json", 1, 1, 1.0, 1.0)
+
+    controller = ReasoningController(
+        FakeRetriever(), BrokenClient(), lambda text: len(text.split())
+    )
+
+    draft, _ledger, _packs, generations = controller.investigate("why")
+
+    assert draft.unresolved == ["Investigation stopped without sufficient evidence."]
+    assert len(generations) == 2
 
 
 class EmptyRetriever:

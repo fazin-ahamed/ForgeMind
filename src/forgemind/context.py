@@ -10,7 +10,7 @@ def assemble_evidence(
     query: str,
     hits: list[SearchHit],
     count_tokens: Callable[[str], int],
-    budget: int = 12_000,
+    budget: int = 10_000,
     archived_tokens: int = 0,
 ) -> EvidencePack:
     if not 0 <= budget <= 32_768:

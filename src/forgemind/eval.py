@@ -29,7 +29,7 @@ from forgemind.verification import verify_answer
 
 
 _SYSTEM_NAMES = ("raw", "vector", "hybrid", "forgemind", "raw32")
-ANSWER_MAX_TOKENS = 1_536
+ANSWER_MAX_TOKENS = 2_048
 
 
 class EvaluationRetriever(Protocol):
@@ -251,7 +251,7 @@ class ControlledSystems:
         system: str,
         case: RuntimeCase,
         hits: list[SearchHit],
-        budget: int = 12_000,
+        budget: int = 10_000,
         prompt_limit: int | None = None,
     ) -> BenchmarkRun:
         started_at = datetime.now(timezone.utc).isoformat()

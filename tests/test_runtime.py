@@ -67,7 +67,7 @@ def test_llama_server_command_pins_context_and_local_host(tmp_path: Path) -> Non
 def test_runtime_allows_slow_bounded_consumer_gpu_generations(tmp_path: Path) -> None:
     config = RuntimeConfig(tmp_path / "llama-server.exe", tmp_path / "model.gguf")
 
-    assert config.max_output_tokens == 1_536
+    assert config.max_output_tokens == 2_048
     assert config.timeout_seconds == 240.0
 
 
