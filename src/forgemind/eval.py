@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from forgemind.benchmark import (
     BenchmarkRun,
@@ -28,7 +29,7 @@ from forgemind.store import ForgeStore
 from forgemind.verification import verify_answer
 
 
-_SYSTEM_NAMES = ("raw", "vector", "hybrid", "forgemind", "raw32")
+_SYSTEM_NAMES = ("raw", "vector", "hybrid", "forgemind", "adaptive", "raw32")
 ANSWER_MAX_TOKENS = 2_048
 
 
@@ -181,6 +182,18 @@ def _unique_spans(items: list[EvidenceItem]) -> list[CitationSpan]:
     return list(unique.values())
 
 
+def route_question(question: str) -> Literal["hybrid", "forgemind"]:
+    normalized = " ".join(question.casefold().split())
+    if len(re.findall(r"\bkey-\d+\b", normalized)) >= 2:
+        return "hybrid"
+    if (
+        "which function matches this behavior" in normalized
+        or "return only its function name" in normalized
+    ):
+        return "hybrid"
+    return "forgemind"
+
+
 class ControlledSystems:
     def __init__(
         self,
@@ -224,6 +237,19 @@ class ControlledSystems:
     def hybrid(self, case: RuntimeCase) -> BenchmarkRun:
         return self._one_shot(
             "hybrid", case, self.retriever.search(case.question, 20)
+        )
+
+    def adaptive(self, case: RuntimeCase) -> BenchmarkRun:
+        selected = (
+            self.hybrid(case)
+            if route_question(case.question) == "hybrid"
+            else self.forgemind(case)
+        )
+        run_id = hashlib.sha256(
+            f"{self.run_group_id}\0{case.id}\0adaptive".encode("utf-8")
+        ).hexdigest()
+        return selected.model_copy(
+            update={"run_id": run_id, "system": "adaptive"}
         )
 
     def forgemind(self, case: RuntimeCase) -> BenchmarkRun:
