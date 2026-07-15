@@ -60,6 +60,13 @@ development run on Modal without rerunning the four source systems:
 modal run modal_benchmark.py --run-group dev-adaptive-modal-20260715 --systems adaptive
 ```
 
+The frozen final bundle uses the same runner with an explicit split and unique
+resumable run group:
+
+```powershell
+modal run modal_benchmark.py --run-group final-primary-20260715 --systems raw,vector,hybrid,forgemind --split final
+```
+
 ## What is measured
 
 The frozen report includes answer F1, required-fact recall, citation precision/recall/validity, retrieval recall@20, abstention F1, unsupported-answer rate, paired 10,000-resample confidence intervals, latency, prompt and cumulative tokens, peak sampled VRAM, indexing time and size, malformed outputs, and terminal errors.

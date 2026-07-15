@@ -38,9 +38,7 @@ class _App:
         return lambda function: function
 
 
-def test_modal_entrypoint_forwards_adaptive_system(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _load_runner(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     modal = ModuleType("modal")
     modal.App = _App  # type: ignore[attr-defined]
     modal.Image = _Image  # type: ignore[attr-defined]
@@ -51,6 +49,13 @@ def test_modal_entrypoint_forwards_adaptive_system(
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def test_modal_entrypoint_forwards_system_and_split(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_runner(monkeypatch)
     outputs = iter(
         [SimpleNamespace(stdout="8ae2748\n"), SimpleNamespace(stdout="")]
     )
@@ -60,6 +65,20 @@ def test_modal_entrypoint_forwards_adaptive_system(
         module.evaluate, "remote", lambda *args: calls.append(args) or {}
     )
 
-    module.main(run_group="fresh", systems="adaptive")
+    module.main(run_group="fresh", systems="adaptive", split="final")
 
-    assert calls == [("fresh", "8ae2748", False, "adaptive")]
+    assert calls == [("fresh", "8ae2748", False, "adaptive", "final")]
+
+
+def test_modal_entrypoint_rejects_unknown_split(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_runner(monkeypatch)
+    outputs = iter(
+        [SimpleNamespace(stdout="8ae2748\n"), SimpleNamespace(stdout="")]
+    )
+    monkeypatch.setattr(module.subprocess, "run", lambda *_a, **_k: next(outputs))
+    monkeypatch.setattr(module.evaluate, "remote", lambda *_args: {})
+
+    with pytest.raises(ValueError, match="split"):
+        module.main(split="private")

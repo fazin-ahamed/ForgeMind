@@ -30,19 +30,29 @@ image = (
 )
 
 
+def _validate_split(split: str) -> None:
+    if split not in {"dev", "final"}:
+        raise ValueError("split must be dev or final")
+
+
 @app.function(image=image, gpu="L4", timeout=4 * 60 * 60, volumes={"/data": volume})
 def evaluate(
-    run_group: str, source_revision: str, dirty_worktree: bool, systems: str
+    run_group: str,
+    source_revision: str,
+    dirty_worktree: bool,
+    systems: str,
+    split: str,
 ) -> dict[str, object]:
     from forgemind.cli import evaluate_benchmark
     from forgemind.benchmark import RuntimeCase, sha256_path
     from forgemind.config import RuntimeConfig
 
+    _validate_split(split)
     os.environ["FORGEMIND_SOURCE_REVISION"] = source_revision
     os.environ["FORGEMIND_DIRTY_WORKTREE"] = str(dirty_worktree).lower()
 
-    benchmark_root = Path("/tmp/benchmarks/dev")
-    with zipfile.ZipFile("/data/uploads/dev-modal.zip") as archive:
+    benchmark_root = Path("/tmp/benchmarks") / split
+    with zipfile.ZipFile(f"/data/uploads/{split}-modal.zip") as archive:
         archive.extractall(benchmark_root)
     source = benchmark_root / "runtime.jsonl"
     os.environ["FORGEMIND_RUNTIME_SHA256"] = sha256_path(source)
@@ -86,7 +96,9 @@ def evaluate(
 def main(
     run_group: str = "dev-modal-20260715",
     systems: str = "raw,vector,hybrid,forgemind",
+    split: str = "dev",
 ) -> None:
+    _validate_split(split)
     source_revision = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         check=True,
@@ -101,5 +113,7 @@ def main(
             text=True,
         ).stdout.strip()
     )
-    result = evaluate.remote(run_group, source_revision, dirty_worktree, systems)
+    result = evaluate.remote(
+        run_group, source_revision, dirty_worktree, systems, split
+    )
     print(json.dumps(result, indent=2, sort_keys=True))
