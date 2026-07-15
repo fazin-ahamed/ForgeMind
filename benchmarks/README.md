@@ -53,6 +53,13 @@ The isolated raw-32K sanity check is secondary and never enters the primary gate
 uv run forgemind evaluate .forgemind-private/benchmarks/final/runtime.jsonl --db-root .forgemind-private/benchmarks/final/databases --archive-band 32k --systems raw32 --runs .forgemind-private/runs/final-raw32 --run-group final-raw32-20260804
 ```
 
+After fixing the adaptive policy on development data, execute its fresh routed
+development run on Modal without rerunning the four source systems:
+
+```powershell
+modal run modal_benchmark.py --run-group dev-adaptive-modal-20260715 --systems adaptive
+```
+
 ## What is measured
 
 The frozen report includes answer F1, required-fact recall, citation precision/recall/validity, retrieval recall@20, abstention F1, unsupported-answer rate, paired 10,000-resample confidence intervals, latency, prompt and cumulative tokens, peak sampled VRAM, indexing time and size, malformed outputs, and terminal errors.

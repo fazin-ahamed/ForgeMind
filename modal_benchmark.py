@@ -32,7 +32,7 @@ image = (
 
 @app.function(image=image, gpu="L4", timeout=4 * 60 * 60, volumes={"/data": volume})
 def evaluate(
-    run_group: str, source_revision: str, dirty_worktree: bool
+    run_group: str, source_revision: str, dirty_worktree: bool, systems: str
 ) -> dict[str, object]:
     from forgemind.cli import evaluate_benchmark
     from forgemind.benchmark import RuntimeCase, sha256_path
@@ -72,7 +72,7 @@ def evaluate(
     result = evaluate_benchmark(
         runtime,
         benchmark_root / "databases",
-        "raw,vector,hybrid,forgemind",
+        systems,
         Path("/data/runs") / run_group,
         run_group,
         None,
@@ -83,7 +83,10 @@ def evaluate(
 
 
 @app.local_entrypoint()
-def main(run_group: str = "dev-modal-20260715") -> None:
+def main(
+    run_group: str = "dev-modal-20260715",
+    systems: str = "raw,vector,hybrid,forgemind",
+) -> None:
     source_revision = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         check=True,
@@ -98,5 +101,5 @@ def main(run_group: str = "dev-modal-20260715") -> None:
             text=True,
         ).stdout.strip()
     )
-    result = evaluate.remote(run_group, source_revision, dirty_worktree)
+    result = evaluate.remote(run_group, source_revision, dirty_worktree, systems)
     print(json.dumps(result, indent=2, sort_keys=True))
