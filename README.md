@@ -100,6 +100,8 @@ The staged ForgeBench program compares the same Qwen3-4B model across raw, vecto
 
 RepoQA, LongMemEval, and RULER inputs are derived benchmark slices rather than official leaderboard submissions. ForgeMind's intended claim remains bounded: it organizes and rehydrates evidence from a million-token information space; it does not directly attend to one million tokens.
 
+For a controlled cloud burst, `modal_benchmark.py` runs the same four-system development matrix on one Modal L4 using the pinned llama.cpp `server-cuda12-b9994` image. Authenticate with `modal setup`, create the private `forgemind-benchmark` Volume, upload the GGUF as `/models/Qwen3-4B-Q4_K_M.gguf` and the private development bundle as `/uploads/dev-modal.zip`, then run `modal run modal_benchmark.py --run-group <unique-id>`. The runner sends the local Git revision and dirty state to the container, preserves both frozen and execution-runtime hashes when paths are rewritten, and stores raw records plus the immutable manifest under `/runs/<unique-id>` in the private Volume.
+
 ## Limitations
 
 - ForgeMind supports a million-token information space through indexing and evidence rehydration; it does not directly attend to one million tokens.
