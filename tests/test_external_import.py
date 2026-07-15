@@ -175,3 +175,38 @@ def test_longmemeval_candidate_keeps_only_evidence_sessions(tmp_path: Path) -> N
     files = sorted(Path(runtime[0].archive_path).glob("*.md"))
 
     assert [path.name for path in files] == ["session-0001.md"]
+
+
+def test_longmemeval_evidence_points_to_turn_containing_answer(tmp_path: Path) -> None:
+    source = [
+        {
+            "question_id": "q1",
+            "question": "Which dance was mentioned?",
+            "answer": "Hoop Dance",
+            "question_date": "2026/07/01",
+            "answer_session_ids": ["answer-session"],
+            "haystack_session_ids": ["answer-session"],
+            "haystack_dates": ["2026/06/01"],
+            "haystack_sessions": [
+                [
+                    {
+                        "role": "assistant",
+                        "content": "The list included Hoop Dance.",
+                    },
+                    {
+                        "role": "user",
+                        "content": "What should I bring?",
+                        "has_answer": True,
+                    },
+                ]
+            ],
+        }
+    ]
+
+    runtime, gold = longmemeval_candidates(source, tmp_path)
+
+    session = Path(runtime[0].archive_path) / "session-0000.md"
+    evidence_line = session.read_text(encoding="utf-8").splitlines()[
+        gold[0].evidence[0].start_line - 1
+    ]
+    assert "Hoop Dance" in evidence_line

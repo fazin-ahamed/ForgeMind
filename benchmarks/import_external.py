@@ -50,6 +50,21 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.casefold()).strip("-")
 
 
+def _contains_answer(text: str, answer: str) -> bool:
+    tokens = [
+        token.strip(".,;:")
+        for token in re.findall(r"[\w./:-]+", text.casefold())
+    ]
+    target = [
+        token.strip(".,;:")
+        for token in re.findall(r"[\w./:-]+", answer.casefold())
+    ]
+    return bool(target) and any(
+        tokens[index : index + len(target)] == target
+        for index in range(len(tokens) - len(target) + 1)
+    )
+
+
 def _write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -170,13 +185,26 @@ def longmemeval_candidates(
         case_id = _slug(f"longmemeval-{question_id}")
         case_root = root / case_id
         evidence: list[CitationSpan] = []
+        answer_absent = question_id.endswith("_abs")
+        raw_answer = row["answer"]
+        accepted = (
+            [str(item) for item in raw_answer]
+            if isinstance(raw_answer, list)
+            else [str(raw_answer)]
+        )
         sessions = list(row["haystack_sessions"])
         session_ids = list(row["haystack_session_ids"])
         dates = list(row["haystack_dates"])
+        answer_session_ids = {
+            str(item) for item in row.get("answer_session_ids", [])
+        }
         evidence_sessions = {
             index
-            for index, raw_session in enumerate(sessions)
-            if any(bool(turn.get("has_answer")) for turn in raw_session)
+            for index, (session_id, raw_session) in enumerate(
+                zip(session_ids, sessions, strict=True)
+            )
+            if str(session_id) in answer_session_ids
+            or any(bool(turn.get("has_answer")) for turn in raw_session)
         }
         retained_sessions = evidence_sessions or {max(0, len(sessions) - 1)}
         for index, (session_id, date, raw_session) in enumerate(
@@ -194,7 +222,8 @@ def longmemeval_candidates(
                 f"Question date: {row['question_date']}",
                 "",
             ]
-            answer_lines: list[int] = []
+            matching_lines: list[int] = []
+            marked_lines: list[int] = []
             for turn in turns:
                 lines.append(
                     "- "
@@ -206,8 +235,16 @@ def longmemeval_candidates(
                         ensure_ascii=False,
                     )
                 )
+                if any(
+                    _contains_answer(str(turn["content"]), answer)
+                    for answer in accepted
+                ):
+                    matching_lines.append(len(lines))
                 if bool(turn.get("has_answer")):
-                    answer_lines.append(len(lines))
+                    marked_lines.append(len(lines))
+            answer_lines = (
+                [] if answer_absent else matching_lines or marked_lines
+            )
             text = "\n".join(lines) + "\n"
             path.write_text(text, encoding="utf-8")
             relative = path.relative_to(case_root).as_posix()
@@ -222,13 +259,6 @@ def longmemeval_candidates(
                 )
                 for line_number in answer_lines
             )
-        answer_absent = question_id.endswith("_abs")
-        raw_answer = row["answer"]
-        accepted = (
-            [str(item) for item in raw_answer]
-            if isinstance(raw_answer, list)
-            else [str(raw_answer)]
-        )
         runtime.append(
             RuntimeCase(
                 id=case_id,
