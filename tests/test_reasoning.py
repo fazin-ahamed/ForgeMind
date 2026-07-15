@@ -196,3 +196,31 @@ def test_empty_evidence_broadens_once_then_abstains() -> None:
     assert len(packs) == 2
     assert generations == []
     assert draft.claims == []
+
+
+def test_controller_reserves_context_for_prompt_and_schema() -> None:
+    class LargeHitRetriever:
+        def search(self, query: str, limit: int = 20) -> list[SearchHit]:
+            return [
+                SearchHit(
+                    "large",
+                    "source",
+                    "hash",
+                    "large.txt",
+                    1,
+                    1,
+                    "token " * 8_001,
+                    1.0,
+                    ("semantic",),
+                )
+            ]
+
+    controller = ReasoningController(
+        LargeHitRetriever(), object(), lambda text: len(text.split())
+    )
+
+    draft, _ledger, packs, generations = controller.investigate("why")
+
+    assert all(pack.active_tokens == 0 for pack in packs)
+    assert generations == []
+    assert draft.unresolved == ["Investigation stopped without sufficient evidence."]

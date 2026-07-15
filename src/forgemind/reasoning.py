@@ -23,6 +23,7 @@ from forgemind.verification import verify_answer
 
 MODE_CYCLES = {"retrieve": 1, "reason": 3, "investigate": 6}
 CONTROLLER_MAX_TOKENS = 2_048
+CONTROLLER_EVIDENCE_TOKENS = 8_000
 STOPPED = ["Investigation stopped without sufficient evidence."]
 
 
@@ -86,6 +87,7 @@ class ReasoningController:
                 query,
                 self.retriever.search(query, 20),
                 self.count_tokens,
+                budget=CONTROLLER_EVIDENCE_TOKENS,
             )
             ledger = ledger.model_copy(
                 update={"cycle": cycle, "retrieval_queries": queries}
