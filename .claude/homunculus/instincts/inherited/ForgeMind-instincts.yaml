@@ -1,0 +1,561 @@
+# Instincts generated from https://github.com/fazin-ahamed/ForgeMind
+# Generated: 2026-07-15T10:58:01.209Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: ForgeMind-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/fazin-ahamed/ForgeMind
+---
+
+# ForgeMind Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: feat, fix, docs
+
+## Evidence
+
+- 18 commits analyzed
+- Detected conventional commit pattern
+- Examples: feat: separate ForgeBench runtime and gold manifests, docs: document reproducible ForgeBench proof workflow
+
+---
+id: ForgeMind-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/fazin-ahamed/ForgeMind
+---
+
+# ForgeMind Commit Length
+
+## Action
+
+Keep commit messages concise (~46 characters)
+
+## Evidence
+
+- Average commit message length: 46 chars
+- Based on 18 commits
+
+---
+id: ForgeMind-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/fazin-ahamed/ForgeMind
+---
+
+# ForgeMind Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: ForgeMind-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/fazin-ahamed/ForgeMind
+---
+
+# ForgeMind Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: ForgeMind-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/fazin-ahamed/ForgeMind
+---
+
+# ForgeMind Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: ForgeMind-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/fazin-ahamed/ForgeMind
+---
+
+# ForgeMind Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: ForgeMind-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/fazin-ahamed/ForgeMind
+---
+
+# ForgeMind Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: ForgeMind-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/fazin-ahamed/ForgeMind
+---
+
+# ForgeMind Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~15x per month
+- Files: **/*.test.*
+
+---
+id: ForgeMind-workflow-feature-or-fix-with-implementation-and-test
+trigger: "when doing feature or fix with implementation and test"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/fazin-ahamed/ForgeMind
+---
+
+# ForgeMind Workflow Feature Or Fix With Implementation And Test
+
+## Action
+
+Follow the feature-or-fix-with-implementation-and-test workflow:
+1. Edit or add implementation file(s) in src/forgemind/ or benchmarks/
+2. Edit or add corresponding test file(s) in tests/
+3. Commit both implementation and test changes together
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~10x per month
+- Files: src/forgemind/*.py, benchmarks/*.py, tests/test_*.py
+
+---
+id: ForgeMind-workflow-multi-module-feature-expansion
+trigger: "when doing multi module feature expansion"
+confidence: 0.7
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/fazin-ahamed/ForgeMind
+---
+
+# ForgeMind Workflow Multi Module Feature Expansion
+
+## Action
+
+Follow the multi-module-feature-expansion workflow:
+1. Edit multiple implementation files in src/forgemind/ and/or benchmarks/
+2. Edit or add multiple test files in tests/
+3. Commit all related changes together
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~4x per month
+- Files: src/forgemind/*.py, benchmarks/*.py, tests/test_*.py
+
+---
+id: ForgeMind-workflow-benchmark-pipeline-update
+trigger: "when doing benchmark pipeline update"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/fazin-ahamed/ForgeMind
+---
+
+# ForgeMind Workflow Benchmark Pipeline Update
+
+## Action
+
+Follow the benchmark-pipeline-update workflow:
+1. Edit or add files in benchmarks/ (e.g., build_forgebench.py, import_external.py)
+2. Edit or add related test files in tests/ (e.g., test_forgebench_builder.py, test_external_import.py)
+3. Optionally update documentation in benchmarks/README.md
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: benchmarks/*.py, benchmarks/README.md, tests/test_forgebench_builder.py
+
+---
+id: ForgeMind-workflow-config-or-context-update-with-tests
+trigger: "when doing config or context update with tests"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/fazin-ahamed/ForgeMind
+---
+
+# ForgeMind Workflow Config Or Context Update With Tests
+
+## Action
+
+Follow the config-or-context-update-with-tests workflow:
+1. Edit src/forgemind/config.py and/or src/forgemind/context.py
+2. Edit or add related test files in tests/ (e.g., test_context.py, test_runtime.py)
+3. Commit both implementation and test changes together
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: src/forgemind/config.py, src/forgemind/context.py, tests/test_context.py
+
+---
+id: forgemind-instinct-file-naming
+trigger: "When creating a new file in the codebase"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct File Naming
+
+## Action
+
+Name the file using snake_case
+
+## Evidence
+
+- Pattern in namingConventions.files
+- Observed in src/forgemind/benchmark.py
+
+---
+id: forgemind-instinct-function-naming
+trigger: "When defining a new function"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Function Naming
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in namingConventions.functions
+
+---
+id: forgemind-instinct-class-naming
+trigger: "When defining a new class"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Class Naming
+
+## Action
+
+Use PascalCase for class names
+
+## Evidence
+
+- Pattern in namingConventions.classes
+
+---
+id: forgemind-instinct-constant-naming
+trigger: "When defining a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Constant Naming
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Pattern in namingConventions.constants
+
+---
+id: forgemind-instinct-import-style
+trigger: "When importing modules within the package"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Import Style
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- Pattern in importStyle
+
+---
+id: forgemind-instinct-export-style
+trigger: "When exporting functions or classes"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle
+
+---
+id: forgemind-instinct-test-file-pattern
+trigger: "When adding a new test file"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Test File Pattern
+
+## Action
+
+Name the file as test_<module>.py and place it in the tests/ directory
+
+## Evidence
+
+- Pattern in tests/test_*.py
+- Seen in tests/test_benchmark.py
+
+---
+id: forgemind-instinct-test-type-unit
+trigger: "When writing tests"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Test Type Unit
+
+## Action
+
+Write unit tests for each new or modified function/class
+
+## Evidence
+
+- Pattern in testTypes: unit
+- Seen in tests/test_benchmark.py
+
+---
+id: forgemind-instinct-test-location
+trigger: "When adding or updating tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Test Location
+
+## Action
+
+Place all test files in the separate tests/ directory
+
+## Evidence
+
+- Pattern in folderStructure.testLocation: separate
+- Seen in tests/test_benchmark.py
+
+---
+id: forgemind-instinct-git-commit-format
+trigger: "When making a commit"
+confidence: 0.95
+domain: git
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Git Commit Format
+
+## Action
+
+Use conventional commit prefixes: feat, fix, or docs, followed by a colon and a short message
+
+## Evidence
+
+- Seen in commit: feat: separate ForgeBench runtime and gold manifests
+- Pattern in commits.prefixes
+
+---
+id: forgemind-instinct-git-commit-length
+trigger: "When writing a commit message"
+confidence: 0.8
+domain: git
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Git Commit Length
+
+## Action
+
+Keep the commit message concise, averaging around 46 characters
+
+## Evidence
+
+- Pattern in commits.averageLength
+
+---
+id: forgemind-instinct-feature-with-tests
+trigger: "When adding a new feature or fixing a bug"
+confidence: 0.98
+domain: workflow
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Feature With Tests
+
+## Action
+
+Edit or add implementation file(s) in src/forgemind/ or benchmarks/, edit or add corresponding test file(s) in tests/, and commit both implementation and test changes together
+
+## Evidence
+
+- Workflow: feature-or-fix-with-implementation-and-test
+- Seen in commit sequence: implementation + test together
+
+---
+id: forgemind-instinct-multi-module-feature
+trigger: "When implementing a cross-cutting feature affecting multiple modules"
+confidence: 0.92
+domain: workflow
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Multi Module Feature
+
+## Action
+
+Edit multiple implementation files in src/forgemind/ and/or benchmarks/, edit or add multiple test files in tests/, and commit all related changes together
+
+## Evidence
+
+- Workflow: multi-module-feature-expansion
+- Pattern in commit sequence: multiple modules + tests
+
+---
+id: forgemind-instinct-benchmark-pipeline-update
+trigger: "When updating or extending the ForgeBench benchmarking pipeline"
+confidence: 0.88
+domain: workflow
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Benchmark Pipeline Update
+
+## Action
+
+Edit or add files in benchmarks/, edit or add related test files in tests/, and optionally update documentation in benchmarks/README.md
+
+## Evidence
+
+- Workflow: benchmark-pipeline-update
+- Pattern in files: benchmarks/*.py, tests/test_forgebench_builder.py
+
+---
+id: forgemind-instinct-config-context-update
+trigger: "When updating configuration or context management logic"
+confidence: 0.86
+domain: workflow
+source: repo-analysis
+source_repo: fazin-ahamed/ForgeMind
+---
+
+# Forgemind Instinct Config Context Update
+
+## Action
+
+Edit src/forgemind/config.py and/or src/forgemind/context.py, edit or add related test files in tests/, and commit both implementation and test changes together
+
+## Evidence
+
+- Workflow: config-or-context-update-with-tests
+- Pattern in files: src/forgemind/config.py, tests/test_context.py
+
